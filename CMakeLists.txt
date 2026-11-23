@@ -20,10 +20,19 @@ endif()
 svwb_enable_warnings(svwb_engine)
 
 find_package(Threads REQUIRED)
-add_library(svwb_search STATIC cpp/src/mlp.cpp cpp/src/search.cpp)
+add_library(svwb_search STATIC cpp/src/mlp.cpp cpp/src/search.cpp cpp/src/analysis.cpp)
 target_link_libraries(svwb_search PUBLIC svwb_engine)
 set_target_properties(svwb_search PROPERTIES CXX_EXTENSIONS OFF)
 svwb_enable_warnings(svwb_search)
+
+add_library(svwb_rules STATIC cpp/src/wb_cards.cpp cpp/src/wb_rules.cpp)
+target_include_directories(svwb_rules PUBLIC cpp/include)
+target_compile_features(svwb_rules PUBLIC cxx_std_20)
+set_target_properties(svwb_rules PROPERTIES CXX_EXTENSIONS OFF)
+if(MSVC)
+    target_compile_options(svwb_rules PUBLIC /utf-8)
+endif()
+svwb_enable_warnings(svwb_rules)
 
 add_executable(svwb_ai cpp/src/main.cpp)
 target_link_libraries(svwb_ai PRIVATE svwb_search Threads::Threads)
@@ -48,11 +57,22 @@ if(BUILD_TESTING)
     add_test(NAME search_unit COMMAND test_search)
     set_tests_properties(search_unit PROPERTIES PASS_REGULAR_EXPRESSION "PASS Phase 2 unit suite")
 
+    add_executable(test_wb cpp/tests/test_wb.cpp)
+    target_link_libraries(test_wb PRIVATE svwb_rules)
+    set_target_properties(test_wb PROPERTIES CXX_EXTENSIONS OFF)
+    svwb_enable_warnings(test_wb)
+    add_test(NAME wb_rules_unit COMMAND test_wb)
+    add_test(NAME wb_mirror_random_10000 COMMAND test_wb --stress)
+    set_tests_properties(wb_mirror_random_10000 PROPERTIES TIMEOUT 60)
+
     find_package(Python3 3.11 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
         add_test(NAME selfplay_binary_logs COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/cpp/tests/check_logs.py"
             --exe "$<TARGET_FILE:svwb_ai>")
         set_tests_properties(selfplay_binary_logs PROPERTIES TIMEOUT 60)
+        add_test(NAME analysis_exports COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cpp/tests/check_analysis.py" "$<TARGET_FILE:svwb_ai>")
+        set_tests_properties(analysis_exports PROPERTIES TIMEOUT 60)
     endif()
 endif()

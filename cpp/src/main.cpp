@@ -1,3 +1,4 @@
+#include "analysis.hpp"
 #include "card_db.hpp"
 #include "engine.hpp"
 #include "search.hpp"
@@ -37,6 +38,9 @@ struct Options {
     std::filesystem::path weights;
     std::filesystem::path opponent_weights;
     std::filesystem::path log_dir;
+    std::filesystem::path analysis_dir;
+    std::optional<std::uint64_t> trace_game;
+    std::optional<std::size_t> trace_top;
     bool evaluate = false;
     bool random_opponent = false;
     SearchOptions search;
@@ -48,10 +52,12 @@ void usage(std::ostream& out) {
            "               [--opponent-weights FILE | --opponent-seed N]\n"
            "               [--simulations N] [--no-exploration] [--log-dir DIR]\n"
            "               [--evaluate [--random-opponent]]\n"
+           "               [--analysis-dir DIR [--trace-game N] [--trace-top N]]\n"
            "Evaluation uses greedy selection and no search noise. --random-opponent\n"
            "samples uniformly from all legal actions, including end turn.\n"
            "Starts at most N games, or stops starting games after N seconds, whichever comes first.\n"
            "Games in progress finish. Seats alternate between the two competitors.\n"
+           "Analysis writes turn_trace.json (default game 1, top 5) and opening_win_rates.csv.\n"
            "Without a game or time limit, runs one game. Without weights, uses seeded random weights.\n";
 }
 
@@ -119,6 +125,12 @@ Options parse_options(int argc, char** argv) {
             options.opponent_weights = value;
         } else if (flag == "--log-dir") {
             options.log_dir = value;
+        } else if (flag == "--analysis-dir") {
+            options.analysis_dir = value;
+        } else if (flag == "--trace-game") {
+            options.trace_game = number<std::uint64_t>(value, flag, 1);
+        } else if (flag == "--trace-top") {
+            options.trace_top = number<std::size_t>(value, flag, 1, kMaxCandidates);
         } else {
             throw std::invalid_argument("Unknown option " + std::string(flag));
         }
@@ -132,6 +144,12 @@ Options parse_options(int argc, char** argv) {
     }
     if (options.games == 0 && options.seconds == 0) {
         options.games = 1;
+    }
+    if (options.analysis_dir.empty() && (options.trace_game || options.trace_top)) {
+        throw std::invalid_argument("--trace-game and --trace-top require --analysis-dir");
+    }
+    if (options.games != 0 && options.trace_game.value_or(1) > options.games) {
+        throw std::invalid_argument("--trace-game exceeds --games");
     }
     return options;
 }
@@ -204,12 +222,14 @@ private:
 
 struct GameResult {
     GameLog log;
+    OpeningHands opening;
+    std::string trace;
     int winner;
     int turns;
     double elapsed;
 };
 
-void play_random_turn(GameState& state, std::mt19937& rng) {
+void play_random_turn(GameState& state, std::mt19937& rng, std::vector<Action>* record) {
     const auto actor = state.turn_player;
     int actions_taken = 0;
     while (state.winner == kOngoing && state.turn_player == actor) {
@@ -218,11 +238,16 @@ void play_random_turn(GameState& state, std::mt19937& rng) {
         }
         const auto actions = legal_actions(state);
         const auto selected = std::uniform_int_distribution<std::size_t>(0, actions.size() - 1)(rng);
-        apply_legal_action(state, actions[selected]);
+        const auto action = actions[selected];
+        if (record) {
+            record->push_back(action);
+        }
+        apply_legal_action(state, action);
     }
 }
 
-GameResult play_game(const Options& options, const Mlp& a, const Mlp& b, std::uint64_t game_id) {
+GameResult play_game(const Options& options, const Mlp& a, const Mlp& b, std::uint64_t game_id,
+                     const std::array<char, kPlayers>& deck_labels) {
     const auto started = Clock::now();
     const bool a_first = game_id % 2 == 0;
     const int a_seat = a_first ? 0 : 1;
@@ -231,16 +256,32 @@ GameResult play_game(const Options& options, const Mlp& a, const Mlp& b, std::ui
     std::mt19937 rng(seeds);
     auto state = new_game(a_first ? *options.deck_a : *options.deck_b,
                           a_first ? *options.deck_b : *options.deck_a, rng);
-    TurnSearch search(a_first ? a : b, a_first ? b : a, rng, options.search);
     const bool logging = !options.log_dir.empty();
     GameResult result{};
+    std::optional<GameTrace> trace;
+    if (!options.analysis_dir.empty()) {
+        result.opening = opening_hands(state);
+        if (game_id == options.trace_game.value_or(1) - 1) {
+            trace.emplace(game_id + 1, options.seed, a_seat, deck_labels, result.opening);
+        }
+    }
+    auto search_options = options.search;
+    search_options.record_actions = trace.has_value();
+    TurnSearch search(a_first ? a : b, a_first ? b : a, rng, search_options);
     std::vector<int> seats;
     while (state.winner == kOngoing) {
         if (result.turns >= 2 * (kDeckSize - kOpeningHand + 1)) {
             throw std::logic_error("Turn limit exceeded in game " + std::to_string(game_id));
         }
         if (options.random_opponent && state.turn_player != a_seat) {
-            play_random_turn(state, rng);
+            if (trace) {
+                const auto before = state;
+                std::vector<Action> actions;
+                play_random_turn(state, rng, &actions);
+                trace->random_turn(before, actions, state);
+            } else {
+                play_random_turn(state, rng, nullptr);
+            }
             ++result.turns;
             continue;
         }
@@ -249,6 +290,9 @@ GameResult play_game(const Options& options, const Mlp& a, const Mlp& b, std::ui
             seats.push_back(state.turn_player);
         }
         auto move = search.choose_turn(state, logging);
+        if (trace) {
+            trace->search_turn(state, move, options.trace_top.value_or(5));
+        }
         if (logging) {
             result.log.policy_sizes.push_back(static_cast<std::int32_t>(move.policy.size()));
             for (const auto& sample : move.policy) {
@@ -257,6 +301,9 @@ GameResult play_game(const Options& options, const Mlp& a, const Mlp& b, std::ui
         }
         state = move.next;
         ++result.turns;
+    }
+    if (trace) {
+        result.trace = trace->finish(state.winner);
     }
     for (std::size_t i = 0; i < seats.size(); ++i) {
         result.log.values[i].target = state.winner == kDraw ? 0.5F : static_cast<float>(state.winner == seats[i]);
@@ -285,6 +332,13 @@ void run(const Options& options) {
     if (!options.log_dir.empty()) {
         logs.emplace(options.log_dir);
     }
+    const std::array deck_labels{options.deck_a == &kDeckA ? 'A' : 'B',
+                                 options.deck_b == &kDeckA ? 'A' : 'B'};
+    std::optional<OpeningStats> openings;
+    std::string traced_game;
+    if (!options.analysis_dir.empty()) {
+        openings.emplace(*options.deck_a, *options.deck_b);
+    }
 
     MatchStats stats;
     std::mutex output_lock;
@@ -301,12 +355,18 @@ void run(const Options& options) {
                 if (options.games != 0 && game_id >= options.games) {
                     break;
                 }
-                const auto result = play_game(options, model_a, model_b, game_id);
+                auto result = play_game(options, model_a, model_b, game_id, deck_labels);
                 const std::scoped_lock lock(output_lock);
                 if (logs) {
                     logs->append(result.log);
                 }
                 const auto a_seat = static_cast<int>(game_id % 2);
+                if (openings) {
+                    openings->observe(result.opening, a_seat, result.winner);
+                    if (!result.trace.empty()) {
+                        traced_game = std::move(result.trace);
+                    }
+                }
                 ++stats.games;
                 stats.turns += result.turns;
                 stats.policy_samples += result.log.policies.size();
@@ -340,6 +400,22 @@ void run(const Options& options) {
     }
     if (logs) {
         logs->finish();
+    }
+    if (openings) {
+        if (traced_game.empty()) {
+            throw std::runtime_error("The requested trace game did not finish within this run");
+        }
+        std::filesystem::create_directories(options.analysis_dir);
+        std::ofstream trace;
+        trace.exceptions(std::ios::badbit | std::ios::failbit);
+        trace.open(options.analysis_dir / "turn_trace.json", std::ios::binary | std::ios::trunc);
+        trace << traced_game;
+        trace.close();
+        std::ofstream csv;
+        csv.exceptions(std::ios::badbit | std::ios::failbit);
+        csv.open(options.analysis_dir / "opening_win_rates.csv", std::ios::binary | std::ios::trunc);
+        openings->write_csv(csv, deck_labels);
+        csv.close();
     }
     const double elapsed = std::chrono::duration<double>(Clock::now() - started).count();
     const auto games = static_cast<double>(stats.games);

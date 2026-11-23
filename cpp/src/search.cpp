@@ -69,6 +69,11 @@ struct BeamNode {
     std::size_t serial;
 };
 
+struct BeamStep {
+    std::size_t parent;
+    Action action;
+};
+
 constexpr Action kEndTurn{ActionType::END_TURN, kNoTarget, kNoTarget};
 constexpr std::size_t kWideBeam = 128;
 
@@ -85,7 +90,8 @@ float candidate_score(const TurnCandidate& candidate) {
 
 } // namespace
 
-std::vector<TurnCandidate> beam_search(const GameState& initial, const Mlp& model, std::size_t width) {
+std::vector<TurnCandidate> beam_search(const GameState& initial, const Mlp& model, std::size_t width,
+                                       bool record_actions) {
     if (width == 0 || initial.winner != kOngoing) {
         throw std::invalid_argument("Beam search needs a positive width and an active game");
     }
@@ -97,11 +103,23 @@ std::vector<TurnCandidate> beam_search(const GameState& initial, const Mlp& mode
     std::vector<BeamNode> beam{{initial, model.predict(extract_features(initial)), 0}};
     std::vector<BeamNode> next_beam;
     std::vector<TurnCandidate> candidates;
+    std::vector<BeamStep> steps;
+    if (record_actions) {
+        steps.push_back({}); // Index zero is the start of the turn.
+    }
     std::size_t serial = 0;
 
-    const auto finish = [&](const GameState& next, const GameState& decision, Prediction prediction) {
+    const auto finish = [&](const GameState& next, const GameState& decision, Prediction prediction,
+                            std::size_t parent, Action last) {
         if (finished.insert(position_key(next)).second) {
-            candidates.push_back({next, decision, prediction});
+            auto& candidate = candidates.emplace_back(TurnCandidate{next, decision, prediction, {}});
+            if (record_actions) {
+                candidate.actions.push_back(last);
+                for (auto index = parent; index != 0; index = steps[index].parent) {
+                    candidate.actions.push_back(steps[index].action);
+                }
+                std::reverse(candidate.actions.begin(), candidate.actions.end());
+            }
         }
     };
     const auto better = [](const BeamNode& a, const BeamNode& b) {
@@ -115,7 +133,7 @@ std::vector<TurnCandidate> beam_search(const GameState& initial, const Mlp& mode
         for (const auto& node : beam) {
             auto ended = node.state;
             apply_legal_action(ended, kEndTurn);
-            finish(ended, node.state, node.prediction);
+            finish(ended, node.state, node.prediction, node.serial, kEndTurn);
             if (step == kBeamSteps) {
                 continue;
             }
@@ -130,9 +148,12 @@ std::vector<TurnCandidate> beam_search(const GameState& initial, const Mlp& mode
                 }
                 const auto prediction = model.predict(extract_features(next));
                 if (next.winner != kOngoing) {
-                    finish(next, next, prediction);
+                    finish(next, next, prediction, node.serial, action);
                 } else {
                     next_beam.push_back({next, prediction, ++serial});
+                    if (record_actions) {
+                        steps.push_back({node.serial, action});
+                    }
                 }
             }
         }
@@ -174,7 +195,7 @@ TurnSearch::TurnSearch(const Mlp& first, const Mlp& second, std::mt19937& rng, S
 TurnSearch::~TurnSearch() = default;
 
 void TurnSearch::expand(Node& node, std::size_t width) {
-    auto candidates = beam_search(node.state, *models_[node.state.turn_player], width);
+    auto candidates = beam_search(node.state, *models_[node.state.turn_player], width, options_.record_actions);
     const auto ranked = std::min(candidates.size(), static_cast<std::size_t>(kRankedCandidates));
     std::vector<float> scores;
     scores.reserve(candidates.size());
@@ -307,6 +328,20 @@ SearchResult TurnSearch::choose_turn(const GameState& state, bool collect_policy
                                          visits.begin());
     }
     result.next = root_->edges[chosen].candidate.next;
+    if (options_.record_actions) {
+        result.trace.total_visits = root_->visits;
+        result.trace.ranked.reserve(root_->edges.size());
+        for (std::size_t i = 0; i < root_->edges.size(); ++i) {
+            auto& edge = root_->edges[i];
+            std::optional<float> value;
+            if (edge.visits > 0) {
+                value = edge.value_sum / static_cast<float>(edge.visits);
+            }
+            result.trace.ranked.push_back({std::move(edge.candidate.actions), edge.visits, value, i == chosen});
+        }
+        std::stable_sort(result.trace.ranked.begin(), result.trace.ranked.end(),
+                         [](const CandidateTrace& a, const CandidateTrace& b) { return a.visits > b.visits; });
+    }
     auto next_root = std::move(root_->edges[chosen].child);
     root_ = std::move(next_root);
     return result;

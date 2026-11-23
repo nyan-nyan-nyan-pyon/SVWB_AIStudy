@@ -3,6 +3,7 @@
 #include "mlp.hpp"
 
 #include <memory>
+#include <optional>
 #include <random>
 #include <vector>
 
@@ -17,6 +18,7 @@ inline constexpr int kMaxCandidates = kRankedCandidates + kRandomCandidates;
 struct SearchOptions {
     int simulations = 64;
     bool exploration = true;
+    bool record_actions = false;
 };
 
 struct TurnCandidate {
@@ -24,19 +26,35 @@ struct TurnCandidate {
     // State at the end of the acting player's moves, before the next player's draw and PP refresh.
     GameState decision;
     Prediction prediction;
+    std::vector<Action> actions;
 };
 
 [[nodiscard]] std::vector<TurnCandidate> beam_search(const GameState& initial, const Mlp& model,
-                                                     std::size_t width = kBeamWidth);
+                                                     std::size_t width = kBeamWidth,
+                                                     bool record_actions = false);
 
 struct PolicySample {
     Features features;
     float probability;
 };
 
+struct CandidateTrace {
+    std::vector<Action> actions;
+    int visits;
+    // Mean backed-up value for the acting player. No estimate for unvisited candidates.
+    std::optional<float> value;
+    bool selected;
+};
+
+struct TurnTrace {
+    int total_visits = 0;
+    std::vector<CandidateTrace> ranked;
+};
+
 struct SearchResult {
     GameState next;
     std::vector<PolicySample> policy;
+    TurnTrace trace;
 };
 
 class TurnSearch {

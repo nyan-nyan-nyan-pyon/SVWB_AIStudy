@@ -1,3 +1,4 @@
+#include "analysis.hpp"
 #include "card_db.hpp"
 #include "engine.hpp"
 #include "search.hpp"
@@ -12,6 +13,7 @@
 #include <numeric>
 #include <source_location>
 #include <span>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -140,11 +142,16 @@ void test_beam_dedup_and_search() {
     a.pp = a.max_pp = 3;
     a.ep = 0;
     const auto model = Mlp::random(7);
-    const auto candidates = beam_search(state, model);
+    const auto candidates = beam_search(state, model, kBeamWidth, true);
     check(candidates.size() == 5);
     for (const auto& candidate : candidates) {
         check(candidate.decision.turn_player == 0 && candidate.next.turn_player == 1);
         check(candidate.next.players[1].deck_idx == state.players[1].deck_idx + 1);
+        auto replay = state;
+        for (const auto action : candidate.actions) {
+            check(apply_action(replay, action));
+        }
+        check(replay == candidate.next);
     }
 
     // Test terminal value handling when the acting player is the second seat.
@@ -155,7 +162,7 @@ void test_beam_dedup_and_search() {
     b.hand_count = 1;
     b.pp = b.max_pp = 5;
     constexpr int simulations = 64;
-    TurnSearch search(model, model, rng, {simulations, false});
+    TurnSearch search(model, model, rng, {simulations, false, true});
     const auto chosen = search.choose_turn(state, true);
     check(chosen.next.winner == 1 && chosen.next.players[0].leader_hp <= 0);
     check(chosen.policy.size() == 2);
@@ -167,7 +174,36 @@ void test_beam_dedup_and_search() {
         total += sample.probability;
     }
     approximately(total, 1.0F);
+    check(chosen.trace.total_visits == simulations && chosen.trace.ranked.size() == 2);
+    const auto selected = std::find_if(chosen.trace.ranked.begin(), chosen.trace.ranked.end(),
+        [](const auto& candidate) { return candidate.selected; });
+    check(selected != chosen.trace.ranked.end() && selected->value == 1.0F);
+    check(selected->actions.size() == 1 && selected->actions[0].type == ActionType::PLAY_CARD);
+    auto replay = state;
+    check(apply_action(replay, selected->actions[0]) && replay == chosen.next);
     std::cout << "PASS commuting plays deduplicated and PUCT finds second-seat lethal\n";
+}
+
+void test_opening_stats() {
+    std::mt19937 rng(301);
+    const auto initial = new_game(kDeckA, kDeckB, rng);
+    const auto opening = opening_hands(initial);
+    for (int seat = 0; seat < kPlayers; ++seat) {
+        check(std::equal(opening[seat].begin(), opening[seat].end(), initial.players[seat].deck.begin()));
+    }
+
+    OpeningStats stats(kDeckA, kDeckB);
+    // A wins with two goblins, draws without a goblin, and loses with one goblin.
+    stats.observe({{{1, 1, 2, 4}, {3, 3, 8, 10}}}, 0, 0);
+    stats.observe({{{3, 5, 6, 10}, {2, 4, 6, 7}}}, 1, kDraw);
+    stats.observe({{{1, 2, 4, 9}, {3, 3, 6, 8}}}, 0, 1);
+    std::ostringstream csv;
+    stats.write_csv(csv, {'A', 'B'});
+    const auto output = csv.str();
+    check(output.find("A,A,1,\"ゴブリン\",2,1,0,0.50000000,1,0,1,0.00000000,50.00000000") !=
+          std::string::npos);
+    check(output.find("B,B,3,\"盾の騎士\",3,1,1,0.33333333,0,0,0,,\n") != std::string::npos);
+    std::cout << "PASS opening stats count presence once, retain draws, and leave empty rates blank\n";
 }
 
 } // namespace
@@ -181,6 +217,7 @@ int main() {
         test_weights(directory);
         test_seat_features();
         test_beam_dedup_and_search();
+        test_opening_stats();
         std::filesystem::remove(directory / "weights.bin");
         std::filesystem::remove(directory);
         std::cout << "PASS Phase 2 unit suite\n";
