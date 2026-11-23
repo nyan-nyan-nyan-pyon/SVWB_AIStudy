@@ -377,6 +377,8 @@ MatchupFeatures::MatchupFeatures(const Deck& first, const Deck& second) {
         add(card->crystal_form);
         add(card->accelerate_form);
         add(card->faith);
+        for (const auto result : card->fusion_results) add(result);
+        for (const auto material : card->fusion_materials) add(material);
         for (const auto related : card->related) {
             if (const auto* def = find_card(related); def && def->implemented) add(related);
         }

@@ -94,10 +94,11 @@ def generate(directory):
     extension = read(directory, "phase5b1_cards.json")
     elf_royal = read(directory, "phase5b2_cards.json")
     dragon_nightmare = read(directory, "phase5b3_cards.json")
+    witch_nemesis = read(directory, "phase5b4_cards.json")
     research = {row["special_effect_id"]: row for row in read(directory, "svwb_special_effect_research.json")["records"]}
-    if any(part["schema"] != 1 for part in (overlay, extension, elf_royal, dragon_nightmare)):
+    if any(part["schema"] != 1 for part in (overlay, extension, elf_royal, dragon_nightmare, witch_nemesis)):
         raise ValueError("Unknown card engine schema version")
-    rules = overlay["cards"] + extension["cards"] + elf_royal["cards"] + dragon_nightmare["cards"]
+    rules = overlay["cards"] + extension["cards"] + elf_royal["cards"] + dragon_nightmare["cards"] + witch_nemesis["cards"]
     forms = {row["source_card_id"]: row for row in research.values() if row["kind"] in ("crystallize", "accelerate")}
     for row in rules:
         if "base_card_id" in row:
@@ -113,7 +114,12 @@ def generate(directory):
     royal = {card["card_id"] for card in rotation if card["class"] == "ロイヤル"}
     dragon = {card["card_id"] for card in rotation if card["class"] == "ドラゴン"}
     nightmare = {card["card_id"] for card in rotation if card["class"] == "ナイトメア"}
-    missing = (scope | elf | royal | dragon | nightmare) - fixed.keys()
+    witch = {card["card_id"] for card in rotation if card["class"] == "ウィッチ"}
+    nemesis = {card["card_id"] for card in rotation if card["class"] == "ネメシス"}
+    all_rotation = {card["card_id"] for card in rotation}
+    if len(rotation) != 469 or len(witch) != 62 or len(nemesis) != 64:
+        raise ValueError("Unexpected rotation card counts")
+    missing = all_rotation - fixed.keys()
     if missing:
         raise ValueError(f"Missing rotation implementations: {sorted(missing)}")
     fixed_ids = {row["id"] for row in rules}
@@ -193,9 +199,23 @@ def generate(directory):
             for key, kind in {"modes_chosen": int, "banish_when_leaving": bool, "track_entries": bool}.items():
                 if key in rules:
                     fields.append(f".{key}={cpp(rules[key], kind)}")
+            for key, kind in {"hand_earth_discount": int, "hand_act_discount": int, "hand_large_entry_discount": int,
+                              "full_artifact_modes": int, "may_play_from_hand": bool,
+                              "fusion_recipe": "FusionRecipe"}.items():
+                if key in rules:
+                    fields.append(f".{key}={cpp(rules[key], kind)}")
+            for field, limit in (("fusion_results", 3), ("fusion_materials", 2)):
+                if field not in rules:
+                    continue
+                resolved = [ids[official_id] for official_id in rules[field]]
+                if len(resolved) > limit or any(card not in implemented for card in resolved):
+                    raise ValueError(f"Invalid {field} for {official}")
+                fields.append(f".{field}={{" + ", ".join(map(str, resolved)) + "}")
+            if "fusion_trigger_pp" in rules:
+                fields.append(f".fusion_trigger_pp={cpp(rules['fusion_trigger_pp'], int)}")
         out.append("    {" + ", ".join(fields) + "},")
     out.append("};\nconstexpr CrestDef crests[]{")
-    for row in overlay["crests"] + extension["crests"] + elf_royal["crests"] + dragon_nightmare["crests"]:
+    for row in overlay["crests"] + extension["crests"] + elf_royal["crests"] + dragon_nightmare["crests"] + witch_nemesis["crests"]:
         record = research[row.get("special_effect_id", CREST_SOURCE_IDS.get(row["id"]))]
         out.append(f"    {{{cpp(row['id'], 'CrestId')}, {cpp(record['countdown'] or 0, int)}, "
                    f"{cpp(row['clock'], 'CrestClock')}, {effect_list(row['effects'], ids, implemented)}, "
@@ -204,7 +224,8 @@ def generate(directory):
     out.extend(f"    {{{official}, {id}}}," for official, id in sorted(ids.items()))
     out.append("};")
     for name, group in (("rotation_batch", scope), ("rotation_elf", elf), ("rotation_royal", royal),
-                        ("rotation_dragon", dragon), ("rotation_nightmare", nightmare)):
+                        ("rotation_dragon", dragon), ("rotation_nightmare", nightmare),
+                        ("rotation_witch", witch), ("rotation_nemesis", nemesis), ("rotation_all", all_rotation)):
         out.append(f"constexpr CardId {name}[]{{" + ", ".join(str(ids[id]) for id in sorted(group)) + "};")
     return "\n".join(out)
 

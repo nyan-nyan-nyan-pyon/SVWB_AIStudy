@@ -57,6 +57,18 @@ std::span<const CardId> nightmare_rotation() {
     return rotation_nightmare;
 }
 
+std::span<const CardId> witch_rotation() {
+    return rotation_witch;
+}
+
+std::span<const CardId> nemesis_rotation() {
+    return rotation_nemesis;
+}
+
+std::span<const CardId> all_rotation() {
+    return rotation_all;
+}
+
 bool is_deck_card(CardId id) {
     const auto* card = find_card(id);
     return card && card->implemented && card->deck_eligible;

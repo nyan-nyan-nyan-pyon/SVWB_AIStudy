@@ -22,6 +22,7 @@ enum class MulliganReturn : std::uint8_t { Shuffle, Bottom };
 enum class CrestClock : std::uint8_t { Printed, Start, End };
 enum class SimultaneousLethal : std::uint8_t { SourceOpponent, NonActive, BothLose };
 enum class RandomTargets : std::uint8_t { PerStep, AtAbilityStart };
+enum class LalaSummonTiming : std::uint8_t { OpponentTurnEnd, OwnerTurnStart, Disabled };
 enum class Priority : std::uint8_t {
     Manual, Transition, LastWords, ActiveCrest, ActiveBoard, OtherCrest, OtherBoard, Deck, Count,
 };
@@ -46,6 +47,10 @@ struct RuleConfig {
     RandomTargets random_targets = RandomTargets::PerStep;                 // U14
     bool rabbit_evolves_with_empty_hand = false;
     bool silence_removes_super_abilities = true;
+    LalaSummonTiming lala_summon_timing = LalaSummonTiming::OpponentTurnEnd;
+    bool refusion_after_hand_transform = true;
+    bool fusion_requires_trigger_pp = false;
+    bool highlander_counts_card_names = true;
 };
 
 enum class Evolution : std::uint8_t { None, Normal, Super };
@@ -56,6 +61,7 @@ enum class CrestId : std::uint8_t {
     None, Testimony, Rituel, Rapid, Haylem, Erralde, Kukishiro, Sisters,
     Shrink, Expand, Dustdays, DeerKing, Beasts, Unkei, March, Gildaria, Almerize,
     Yube, Wadatsumi, Reflection, Okuyoka, Miltio, IstenDead, Gremory,
+    Insomnia, Lincle, Shim, Tico, Sephie, NoinInterrogation, Noin, Lala, Sloth, Cutthroat, Stranger,
 };
 
 // Supplemental ability flags used by the extended combat and target rules.
@@ -71,6 +77,8 @@ inline constexpr std::uint16_t kIgnoreWard = 1 << 15;
 inline constexpr std::uint8_t kLoseLastWords = 1 << 0;
 inline constexpr std::uint8_t kRebirthLastWords = 1 << 1;
 inline constexpr std::uint8_t kDeadTrait = 1 << 2;
+inline constexpr std::uint8_t kFusedBeta = 1 << 3;
+inline constexpr std::uint8_t kFusedGamma = 1 << 4;
 
 struct CardModifiers {
     std::uint16_t abilities;
@@ -159,6 +167,8 @@ struct PlayerState {
     std::uint16_t plays_this_turn;
     std::uint16_t played_cost_mask;
     std::int16_t leader_hp;
+    std::int16_t leader_max_hp;
+    std::uint16_t artifact_types_entered;
     std::uint8_t deck_idx;
     std::uint8_t deck_end;
     std::uint8_t hand_count;
@@ -176,6 +186,7 @@ struct PlayerState {
     bool manual_evolved;
     bool leader_barrier;
     bool acted_evidence;
+    bool acted_amulet;
     bool attacked_leader_this_turn;
     bool attacked_leader_last_turn;
 

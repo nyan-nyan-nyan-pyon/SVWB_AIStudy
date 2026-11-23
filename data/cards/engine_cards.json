@@ -468,7 +468,15 @@
       "cost": 1,
       "earth": true,
       "deck_eligible": false,
-      "card_id": 90031210
+      "card_id": 90031210,
+      "act_cost": 1,
+      "effects": [
+        {
+          "trigger": "OnAct",
+          "operation": "AddEarth",
+          "amount": 1
+        }
+      ]
     },
     {
       "id": 124,

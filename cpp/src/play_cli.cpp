@@ -344,7 +344,7 @@ Object player_json(const GameState& state, int seat, bool show_hand, const Actio
         }
     }
     Object result{
-        {"seat", seat_name(seat)}, {"hp", player.leader_hp}, {"max_hp", kLeaderMaxHp},
+        {"seat", seat_name(seat)}, {"hp", player.leader_hp}, {"max_hp", player.leader_max_hp},
         {"pp", player.available_pp()}, {"regular_pp", player.pp}, {"max_pp", player.max_pp},
         {"bonus_pp", player.bonus_pp}, {"extra_pp_available", player.extra_pp_available},
         {"extra_pp_uses", player.extra_pp_uses}, {"ep", player.ep}, {"sep", player.sep},

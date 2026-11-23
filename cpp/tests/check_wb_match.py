@@ -129,6 +129,35 @@ def check_elf_royal_decks(command, root):
     check_replay(logs)
 
 
+def check_witch_nemesis_decks(command, root):
+    catalog = json.loads(
+        (Path(__file__).resolve().parents[2] / "data/cards/svwb_rotation_ja.json").read_text(encoding="utf-8")
+    )
+    decks = {
+        "witch": ("ウィッチ", [10131320, 10831310]),
+        "nemesis": ("ネメシス", [10071110, 10072110, 10671110, 10672110, 10673110]),
+    }
+    for name, (faction, required) in decks.items():
+        ids = required + [
+            card["card_id"] for card in catalog
+            if card["class"] == faction and card["card_id"] not in required
+        ][:14 - len(required)]
+        deck = [{"card_id": card_id, "copies": 3 if index < 13 else 1}
+                for index, card_id in enumerate(ids)]
+        (root / f"{name}.json").write_text(json.dumps({"cards": deck}), encoding="utf-8")
+    logs = root / "witch-nemesis"
+    subprocess.run(
+        [*command, "--deck-a", root / "witch.json", "--deck-b", root / "nemesis.json", "--log-dir", logs],
+        check=True, capture_output=True, encoding="utf-8", timeout=30,
+    )
+    mapping = json.loads((logs / "matchup_features.json").read_text(encoding="utf-8"))
+    assert mapping["input_dim"] == 256
+    official = {card["official_id"]: card["local_id"] for card in mapping["cards"]}
+    assert official[10131320] != official[10831310]
+    assert {90071210, 90071220, 90072110, 90072120, 90073110, 90073120, 90073130, 90074110} <= official.keys()
+    check_replay(logs)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("exe", type=Path)
@@ -150,6 +179,7 @@ def main():
         check_exports(root)
         check_custom_decks(command, root)
         check_elf_royal_decks(command, root)
+        check_witch_nemesis_decks(command, root)
     print("PASS WB logs, balanced exports and seat-invariant local IDs")
 
 

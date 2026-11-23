@@ -38,6 +38,7 @@ add_custom_command(OUTPUT "${SVWB_GENERATED_CARDS}"
             data/cards/svwb_special_effect_research.json data/cards/phase5b1_cards.json
             data/cards/phase5b2_cards.json
             data/cards/phase5b3_cards.json
+            data/cards/phase5b4_cards.json
     VERBATIM)
 add_library(svwb_rules STATIC cpp/src/wb_cards.cpp cpp/src/wb_rules.cpp "${SVWB_GENERATED_CARDS}")
 target_include_directories(svwb_rules PUBLIC cpp/include)
@@ -96,9 +97,15 @@ if(BUILD_TESTING)
     add_test(NAME wb_dragon_nightmare_119_unit COMMAND test_wb --dragon-nightmare-unit)
     add_test(NAME wb_dragon_neutral_random_5000 COMMAND test_wb --dragon-stress)
     add_test(NAME wb_nightmare_neutral_random_5000 COMMAND test_wb --nightmare-stress)
+    add_test(NAME wb_witch_nemesis_126_unit COMMAND test_wb --witch-nemesis-unit)
+    add_test(NAME wb_witch_neutral_random_5000 COMMAND test_wb --witch-stress)
+    add_test(NAME wb_nemesis_neutral_random_5000 COMMAND test_wb --nemesis-stress)
+    add_test(NAME wb_rotation_registry_469 COMMAND test_wb --rotation-registry)
+    add_test(NAME wb_full_rotation_random_10000 COMMAND test_wb --full-rotation-stress)
     set_tests_properties(wb_mirror_random_10000 wb_rotation_mirror_random_10000
         wb_elf_neutral_random_5000 wb_royal_neutral_random_5000
-        wb_dragon_neutral_random_5000 wb_nightmare_neutral_random_5000 PROPERTIES TIMEOUT 60)
+        wb_dragon_neutral_random_5000 wb_nightmare_neutral_random_5000
+        wb_witch_neutral_random_5000 wb_nemesis_neutral_random_5000 wb_full_rotation_random_10000 PROPERTIES TIMEOUT 60)
 
     if(Python3_Interpreter_FOUND)
         add_test(NAME selfplay_binary_logs COMMAND "${Python3_EXECUTABLE}"
