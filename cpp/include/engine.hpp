@@ -35,4 +35,7 @@ private:
 // Returns false without modifying the state if the action is illegal.
 [[nodiscard]] bool apply_action(GameState& state, Action action);
 
+// The caller must already know that the action is legal for this position.
+void apply_legal_action(GameState& state, Action action);
+
 } // namespace svwb

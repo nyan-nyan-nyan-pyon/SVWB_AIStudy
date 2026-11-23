@@ -19,6 +19,17 @@ if(MSVC)
 endif()
 svwb_enable_warnings(svwb_engine)
 
+find_package(Threads REQUIRED)
+add_library(svwb_search STATIC cpp/src/mlp.cpp cpp/src/search.cpp)
+target_link_libraries(svwb_search PUBLIC svwb_engine)
+set_target_properties(svwb_search PROPERTIES CXX_EXTENSIONS OFF)
+svwb_enable_warnings(svwb_search)
+
+add_executable(svwb_ai cpp/src/main.cpp)
+target_link_libraries(svwb_ai PRIVATE svwb_search Threads::Threads)
+set_target_properties(svwb_ai PROPERTIES CXX_EXTENSIONS OFF)
+svwb_enable_warnings(svwb_ai)
+
 include(CTest)
 if(BUILD_TESTING)
     add_executable(test_engine cpp/tests/test_engine.cpp)
@@ -29,4 +40,19 @@ if(BUILD_TESTING)
     add_test(NAME engine_unit COMMAND test_engine)
     add_test(NAME engine_random_10000 COMMAND test_engine --stress)
     set_tests_properties(engine_random_10000 PROPERTIES TIMEOUT 60)
+
+    add_executable(test_search cpp/tests/test_search.cpp)
+    target_link_libraries(test_search PRIVATE svwb_search)
+    set_target_properties(test_search PROPERTIES CXX_EXTENSIONS OFF)
+    svwb_enable_warnings(test_search)
+    add_test(NAME search_unit COMMAND test_search)
+    set_tests_properties(search_unit PROPERTIES PASS_REGULAR_EXPRESSION "PASS Phase 2 unit suite")
+
+    find_package(Python3 3.11 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME selfplay_binary_logs COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cpp/tests/check_logs.py"
+            --exe "$<TARGET_FILE:svwb_ai>")
+        set_tests_properties(selfplay_binary_logs PROPERTIES TIMEOUT 60)
+    endif()
 endif()

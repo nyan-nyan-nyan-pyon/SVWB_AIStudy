@@ -384,9 +384,14 @@ bool apply_action(GameState& state, Action action) {
     if (std::find(actions.begin(), actions.end(), action) == actions.end()) {
         return false;
     }
+    apply_legal_action(state, action);
+    return true;
+}
+
+void apply_legal_action(GameState& state, Action action) {
     if (action.type == ActionType::END_TURN) {
         end_turn(state);
-        return true;
+        return;
     }
 
     EventQueue queue;
@@ -404,7 +409,6 @@ bool apply_action(GameState& state, Action action) {
         break;
     }
     resolve(state, queue);
-    return true;
 }
 
 } // namespace svwb
