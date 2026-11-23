@@ -1,0 +1,32 @@
+cmake_minimum_required(VERSION 3.20)
+project(SVWB_AIStudy LANGUAGES CXX)
+
+add_library(svwb_engine STATIC cpp/src/engine.cpp)
+target_include_directories(svwb_engine PUBLIC cpp/include)
+target_compile_features(svwb_engine PUBLIC cxx_std_20)
+set_target_properties(svwb_engine PROPERTIES CXX_EXTENSIONS OFF)
+
+function(svwb_enable_warnings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /permissive-)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endfunction()
+
+if(MSVC)
+    target_compile_options(svwb_engine PUBLIC /utf-8)
+endif()
+svwb_enable_warnings(svwb_engine)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(test_engine cpp/tests/test_engine.cpp)
+    target_link_libraries(test_engine PRIVATE svwb_engine)
+    set_target_properties(test_engine PROPERTIES CXX_EXTENSIONS OFF)
+    svwb_enable_warnings(test_engine)
+
+    add_test(NAME engine_unit COMMAND test_engine)
+    add_test(NAME engine_random_10000 COMMAND test_engine --stress)
+    set_tests_properties(engine_random_10000 PROPERTIES TIMEOUT 60)
+endif()
