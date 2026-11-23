@@ -1,0 +1,652 @@
+[
+  {
+    "card_id": 90001210,
+    "source_card_ids": [
+      11001110,
+      11002110,
+      11002210,
+      11003110,
+      11003210,
+      11011110,
+      11012310,
+      11013110,
+      11014110,
+      11021110,
+      11022110,
+      11023110,
+      11023310,
+      11031110,
+      11032110,
+      11032310,
+      11033110,
+      11033310,
+      11034110,
+      11041110,
+      11042110,
+      11043310,
+      11051110,
+      11052110,
+      11052310,
+      11054110,
+      11061110,
+      11063310,
+      11071110,
+      11072110,
+      11072310,
+      11073310
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90001210",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90011110,
+    "source_card_ids": [
+      10011110,
+      10011210,
+      10511120,
+      10511310,
+      10513110,
+      10514120,
+      10711120,
+      10811120,
+      10812110,
+      10912110,
+      10912310,
+      11011310,
+      11012120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90011110",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90011120,
+    "source_card_ids": [
+      10611110,
+      10611310,
+      10612110,
+      10613110,
+      10613310
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90011120",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90011310,
+    "source_card_ids": [
+      10714120,
+      10912310,
+      11012120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90011310",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90014110,
+    "source_card_ids": [
+      10814120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90014110",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90014330,
+    "source_card_ids": [
+      10614120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90014330",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90021110,
+    "source_card_ids": [
+      10022110,
+      10522310,
+      10721120,
+      10722110,
+      10722120,
+      10723110
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90021110",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90021120,
+    "source_card_ids": [
+      10523110,
+      10721120,
+      10722310,
+      10724110,
+      10724120,
+      10821130,
+      10921310,
+      10922120,
+      11021310
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90021120",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90021130,
+    "source_card_ids": [
+      10821110
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90021130",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90021210,
+    "source_card_ids": [
+      10921110,
+      10922110,
+      10923110,
+      10923310,
+      10924110
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90021210",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90021310,
+    "source_card_ids": [
+      10923110,
+      11024120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90021310",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90021320,
+    "source_card_ids": [
+      10922110,
+      11024120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90021320",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90021330,
+    "source_card_ids": [
+      10921110
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90021330",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90021340,
+    "source_card_ids": [
+      10923110,
+      11021120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90021340",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90021350,
+    "source_card_ids": [
+      10521120,
+      10522120,
+      10523310,
+      10524120,
+      10822110,
+      11024120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90021350",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90022110,
+    "source_card_ids": [
+      10822310
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90022110",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90024320,
+    "source_card_ids": [
+      10624120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90024320",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90024330,
+    "source_card_ids": [
+      10824110
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90024330",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90031110,
+    "source_card_ids": [
+      10031320,
+      10532310,
+      10931310,
+      11031310
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90031110",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90031120,
+    "source_card_ids": [
+      10032110,
+      10531110,
+      10533110,
+      10834120,
+      11032120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90031120",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90031210,
+    "source_card_ids": [
+      10031210,
+      10531110,
+      10532310,
+      10731120,
+      10731310,
+      10732110,
+      10732120,
+      10732310,
+      10733310,
+      11031120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90031210",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90031310,
+    "source_card_ids": [
+      10831120,
+      10833110
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90031310",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90034340,
+    "source_card_ids": [
+      10834110
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90034340",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90034350,
+    "source_card_ids": [
+      10834110
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90034350",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90041110,
+    "source_card_ids": [
+      10941310
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90041110",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90041120,
+    "source_card_ids": [
+      10042120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90041120",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90041130,
+    "source_card_ids": [
+      10541120,
+      10542120,
+      10544120,
+      10841130,
+      10842110
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90041130",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90044330,
+    "source_card_ids": [
+      10644120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90044330",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90051110,
+    "source_card_ids": [
+      10552110,
+      10553310,
+      10751120,
+      10752110,
+      10752310,
+      10753110,
+      11054110
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90051110",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90051120,
+    "source_card_ids": [
+      10052110,
+      10653110,
+      10751110,
+      10752310,
+      10851120,
+      10851130,
+      10852110
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90051120",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90051130,
+    "source_card_ids": [
+      10052120,
+      10552110,
+      10651120,
+      10752310,
+      10951310,
+      11051310,
+      11053110,
+      11054110
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90051130",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90051140,
+    "source_card_ids": [
+      10552110,
+      10753110,
+      10951310,
+      11052110
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90051140",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90054330,
+    "source_card_ids": [
+      10654120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90054330",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90061110,
+    "source_card_ids": [
+      10062210,
+      10564120,
+      10662120,
+      10964120,
+      11062120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90061110",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90061120,
+    "source_card_ids": [
+      10961210
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90061120",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90061130,
+    "source_card_ids": [
+      10061210
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90061130",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90061140,
+    "source_card_ids": [
+      11062110,
+      11062310,
+      11063310,
+      11064110
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90061140",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90071110,
+    "source_card_ids": [
+      10072210,
+      10571110,
+      10972120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90071110",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90071120,
+    "source_card_ids": [
+      10071120,
+      10571110,
+      10972120,
+      11071310
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90071120",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90071130,
+    "source_card_ids": [
+      10771310,
+      10773110,
+      10874120,
+      10971120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90071130",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90071140,
+    "source_card_ids": [
+      10771310,
+      10772110,
+      10772120,
+      10774120,
+      10872110,
+      11072120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90071140",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90071150,
+    "source_card_ids": [
+      10771110,
+      10772120,
+      10773110,
+      10971310
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90071150",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90071160,
+    "source_card_ids": [
+      10872120,
+      10873110
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90071160",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90071210,
+    "source_card_ids": [
+      10071110,
+      10071310
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90071210",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90071220,
+    "source_card_ids": [
+      10071310,
+      10072110
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90071220",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90072110,
+    "source_card_ids": [
+      10071110,
+      10071310,
+      11072120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90072110",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90072120,
+    "source_card_ids": [
+      10071310,
+      10072110
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90072120",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90073110,
+    "source_card_ids": [
+      10071110,
+      10071310,
+      10072110,
+      10671120,
+      11072120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90073110",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90073120,
+    "source_card_ids": [
+      10071110,
+      10071310,
+      10072110,
+      10572110,
+      10671120,
+      11072120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90073120",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90073130,
+    "source_card_ids": [
+      10071110,
+      10071310,
+      10072110,
+      10671120,
+      11072120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90073130",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90074110,
+    "source_card_ids": [
+      10071110,
+      10071310,
+      10072110,
+      10671120,
+      11072120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90074110",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90074140,
+    "source_card_ids": [
+      10573310,
+      10574120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90074140",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90074150,
+    "source_card_ids": [
+      10974120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90074150",
+    "status": "unresolved",
+    "definition": null
+  },
+  {
+    "card_id": 90074320,
+    "source_card_ids": [
+      10674120
+    ],
+    "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90074320",
+    "status": "unresolved",
+    "definition": null
+  }
+]

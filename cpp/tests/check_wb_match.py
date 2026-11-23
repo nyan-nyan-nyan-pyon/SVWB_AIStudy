@@ -77,6 +77,32 @@ def check_exports(path):
                 assert int(row[f"{with_key}_games"]) + int(row[f"{without_key}_games"]) == games
 
 
+def check_custom_decks(command, root):
+    decks = Path(__file__).resolve().parents[2] / "data/decks"
+    mirror, monk = decks / "bishop-mirror.json", decks / "bishop-monk.json"
+    mappings = []
+    for a, b in ((mirror, monk), (monk, mirror)):
+        logs = root / a.stem
+        result = subprocess.run([*command, "--deck-a", a, "--deck-b", b, "--log-dir", logs],
+                                check=True, capture_output=True, encoding="utf-8", timeout=30)
+        assert "feature_schema=wb-matchup-v1" in result.stdout
+        mapping = json.loads((logs / "matchup_features.json").read_text(encoding="utf-8"))
+        assert mapping["input_dim"] == 256
+        cards = mapping["cards"]
+        assert [card["local_id"] for card in cards] == list(range(len(cards)))
+        assert {11061120, 90061140, 90001210} <= {card["official_id"] for card in cards}
+        rows = list(SAMPLE.iter_unpack((logs / "val_log.bin").read_bytes()))
+        assert rows and all(row[241] == 1 and bounded_features(row) for row in rows)
+        check_replay(logs)
+        mappings.append(mapping)
+    assert mappings[0] == mappings[1]
+
+    unsupported = root / "unsupported.json"
+    unsupported.write_text(json.dumps({"cards": [{"card_id": 10614120, "copies": 1}]}), encoding="utf-8")
+    failed = subprocess.run([*command, "--deck-a", unsupported], capture_output=True, encoding="utf-8", timeout=30)
+    assert failed.returncode != 0 and "lacks playable engine rules" in failed.stderr
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("exe", type=Path)
@@ -96,7 +122,8 @@ def main():
         )
         assert re.search(r"A_first=2 A_second=2 A_wins=\d+ B_wins=\d+ draws=\d+", result.stdout)
         check_exports(root)
-    print("PASS WB feature/log format, legal traces and balanced opening exports")
+        check_custom_decks(command, root)
+    print("PASS WB logs, balanced exports and seat-invariant local IDs")
 
 
 if __name__ == "__main__":

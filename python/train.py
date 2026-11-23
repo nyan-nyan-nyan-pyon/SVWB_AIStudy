@@ -179,6 +179,16 @@ def train_generation(replay_dirs, previous_path: Path, output: Path, reference_p
         raise ValueError("Replay directories, positive epochs and positive batch size are required")
     if learning_rate is not None and (not math.isfinite(learning_rate) or learning_rate <= 0):
         raise ValueError("Learning rate must be finite and positive")
+    matchups = []
+    for _, path in replay_dirs:
+        layout = path / "matchup_features.json"
+        matchups.append(json.loads(layout.read_text(encoding="utf-8")) if layout.is_file() else None)
+    if any(layout != matchups[0] for layout in matchups[1:]):
+        raise ValueError("Replay directories use different matchup feature layouts")
+    if matchups[0] is not None:
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "matchup_features.json").write_text(
+            json.dumps(matchups[0], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     torch.manual_seed(seed)
     replays = [read_replay(path) for _, path in replay_dirs]
     if not reference_path.exists():

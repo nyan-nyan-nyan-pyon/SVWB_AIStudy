@@ -1,2 +1,10 @@
 *
 !.gitignore
+!cards/
+!cards/*.json
+!decks/
+!decks/*.json
+!phase5a-matchups/
+!phase5a-matchups/win_rates.csv
+!phase5a-matchups/win_rates.md
+!phase5a-matchups/heatmap.png

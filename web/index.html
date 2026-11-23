@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ローカル対戦 | SVWB AI Study</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="brand-mark" aria-hidden="true">◇</div>
+    <div>
+      <div class="brand-name">SVWB AI Study</div>
+      <h1>ローカル対戦</h1>
+    </div>
+    <div class="match-type"><span id="model-name">学習済みモデル</span><span id="match-decks">確定ビショップ</span></div>
+  </header>
+  <main>
+    <form id="setup" class="setup">
+      <label>自分のデッキ
+        <select id="deck-a"><option value="default">確定ビショップ</option></select>
+      </label>
+      <label>相手のデッキ
+        <select id="deck-b"><option value="default">確定ビショップ</option></select>
+      </label>
+      <label>モデル
+        <select id="model"><option value="default">既定のモデル</option></select>
+      </label>
+      <label>手番
+        <select id="seat">
+          <option value="first">先攻</option>
+          <option value="second">後攻</option>
+          <option value="random" selected>ランダム</option>
+        </select>
+      </label>
+      <label>AIシミュレーション数
+        <select id="simulations">
+          <option value="32">32</option>
+          <option value="64" selected>64</option>
+          <option value="128">128</option>
+        </select>
+      </label>
+      <button class="primary" type="submit">新規対局</button>
+    </form>
+    <p id="error" class="error" role="alert" hidden></p>
+
+    <div class="layout">
+      <div class="arena">
+        <section class="side opponent" aria-labelledby="opponent-name">
+          <div class="side-heading">
+            <h2 id="opponent-name">対戦AI</h2><span id="opponent-seat" class="seat-label"></span>
+          </div>
+          <div id="opponent-stats" class="stats"></div>
+          <div id="opponent-hand" class="debug-hand" hidden></div>
+          <div class="zone"><span class="zone-label">クレスト</span><div id="opponent-crests" class="slots crests"></div></div>
+          <div class="zone"><span class="zone-label">盤面</span><div id="opponent-board" class="slots board"></div></div>
+        </section>
+
+        <div class="turnline">
+          <span id="turn-number" class="turn-number">対局前</span>
+          <span id="status" role="status">新規対局を開始してください。</span>
+          <button id="retry-ai" type="button" hidden>AIの手番を進める</button>
+        </div>
+
+        <section class="side player" aria-labelledby="human-name">
+          <div class="zone"><span class="zone-label">盤面</span><div id="human-board" class="slots board"></div></div>
+          <div class="zone"><span class="zone-label">クレスト</span><div id="human-crests" class="slots crests"></div></div>
+          <div class="side-heading">
+            <h2 id="human-name">あなた</h2><span id="human-seat" class="seat-label"></span>
+            <div class="turn-controls">
+              <button id="extra-pp" type="button" disabled>エクストラPP</button>
+              <button id="end-turn" class="primary" type="button" disabled>ターン終了</button>
+            </div>
+          </div>
+          <div id="human-stats" class="stats"></div>
+          <div id="hand-zone" class="hand-zone">
+            <div class="hand-heading">
+              <h3 id="hand-title">手札</h3><span id="hand-count" class="seat-label"></span>
+            </div>
+            <p id="mulligan-help" class="hint" hidden>カードをクリックして交換するカードを選んでください。</p>
+            <div id="hand" class="hand"></div>
+            <button id="confirm-mulligan" class="primary" type="button" hidden>マリガン確定</button>
+          </div>
+          <section id="action-panel" class="action-panel" aria-labelledby="action-title" hidden>
+            <div class="action-heading">
+              <h3 id="action-title"></h3><button id="clear-selection" type="button">選択を解除</button>
+            </div>
+            <p id="action-description" class="hint"></p>
+            <div id="action-options" class="action-options"></div>
+          </section>
+        </section>
+      </div>
+
+      <aside class="research" aria-labelledby="research-title">
+        <div class="research-heading">
+          <h2 id="research-title">対戦の記録</h2>
+          <label class="debug-toggle"><input id="debug" type="checkbox"> 相手手札を表示（デバッグ）</label>
+        </div>
+        <section aria-labelledby="human-analysis-title">
+          <div class="section-heading">
+            <h3 id="human-analysis-title">あなたの候補手</h3><span id="human-analysis-turn" class="seat-label"></span>
+          </div>
+          <p id="human-analysis-status" class="hint" role="status"></p>
+          <div id="human-analysis"></div>
+          <button id="retry-analysis" type="button" hidden>候補を再取得</button>
+        </section>
+        <section aria-labelledby="ai-title">
+          <div class="section-heading"><h3 id="ai-title">直前のAIターン</h3><span id="analysis-turn" class="seat-label"></span></div>
+          <div id="analysis"><p class="hint">AIの手番が終わると、選択した手順と探索結果が表示されます。</p></div>
+        </section>
+        <section aria-labelledby="history-title">
+          <div class="section-heading"><h3 id="history-title">行動履歴</h3><span class="seat-label">最新40件</span></div>
+          <ol id="history" class="history"></ol>
+        </section>
+      </aside>
+    </div>
+  </main>
+</body>
+</html>

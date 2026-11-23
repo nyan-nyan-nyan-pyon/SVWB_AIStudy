@@ -56,6 +56,7 @@ struct Scenario {
         auto& owner = player(seat);
         CHECK(cards.size() <= owner.hand.size());
         owner.hand = {};
+        owner.hand_modifiers = {};
         std::copy(cards.begin(), cards.end(), owner.hand.begin());
         owner.hand_count = static_cast<std::uint8_t>(cards.size());
     }
@@ -68,7 +69,8 @@ struct Scenario {
         auto& object = owner.board[owner.board_count++];
         object = {state.next_creation_order++, id, static_cast<std::int16_t>(card->atk), hp, hp,
                   card->abilities, static_cast<std::uint16_t>(card->clue),
-                  static_cast<std::uint8_t>(card->countdown), 1, Evolution::None, false, true, false, false};
+                  static_cast<std::uint8_t>(card->countdown), 1, Evolution::None, false, true, false, false,
+                  false, static_cast<std::uint16_t>(card->earth), {}};
         return object;
     }
 
@@ -476,7 +478,7 @@ void mulligan_and_first_draw() {
             CHECK(first.hand[i] == original.players[0].deck[mask & (1 << i) ? replacement++ : i]);
         }
         CHECK(first.deck_idx == 4 && state.players[1] == original.players[1]);
-        CHECK(std::is_permutation(first.deck.begin(), first.deck.end(), kProvisionalMirror.begin()));
+        CHECK(std::is_permutation(first.deck.begin(), first.deck.begin() + first.deck_end, kProvisionalMirror.begin()));
         CHECK(first.deck[4] == original.players[0].deck[replacement]);
         CHECK(apply_action(state, {Mulligan, kNoTarget, kNoTarget, 15}, rules));
         CHECK(state.phase == Phase::Main && state.turn_player == 0 && state.players[0].hand_count == 5);
@@ -522,14 +524,38 @@ void extra_pp() {
     early.run({EndTurn});
     early.reject({ExtraPp});
 
-    Scenario late;
-    late.state.turn_player = 1;
-    late.state.turn_number = 5;
-    late.next_own_turn();
-    late.run({ExtraPp});
-    CHECK(late.player(1).max_pp == 10 && late.player(1).available_pp() == 11);
-    late.next_own_turn();
-    late.reject({ExtraPp});
+    for (const int first_use_turn : {6, 7}) {
+        Scenario saved;
+        saved.state.turn_player = 1;
+        saved.state.turn_number = 5;
+        CHECK(saved.legal({ExtraPp}));
+        while (saved.state.turn_number < first_use_turn) {
+            saved.run({EndTurn});
+            CHECK(saved.player(1).extra_pp_available && saved.player(1).extra_pp_uses == 0);
+            saved.reject({ExtraPp}); // Only the second player can spend it.
+            saved.run({EndTurn});
+        }
+        CHECK(saved.player(1).available_pp() == saved.player(1).max_pp);
+        saved.run({ExtraPp});
+        CHECK(saved.player(1).extra_pp_uses == 1 && saved.player(1).bonus_pp == 1);
+        saved.reject({ExtraPp});
+        saved.next_own_turn();
+        CHECK(saved.player(1).bonus_pp == 0);
+        saved.reject({ExtraPp});
+    }
+
+    Scenario deferred;
+    deferred.state.turn_player = 1;
+    deferred.state.turn_number = 5;
+    deferred.run({ExtraPp});
+    deferred.next_own_turn();
+    CHECK(deferred.player(1).extra_pp_available && deferred.player(1).bonus_pp == 0);
+    deferred.next_own_turn();
+    deferred.run({ExtraPp});
+    CHECK(deferred.player(1).extra_pp_uses == 2 &&
+          deferred.player(1).max_pp == 10 && deferred.player(1).available_pp() == 11);
+    deferred.next_own_turn();
+    deferred.reject({ExtraPp});
 }
 
 void evolution_rights_and_super_combat() {
@@ -760,6 +786,10 @@ void effect_transitions() {
         CHECK(queued.player().board[0].evolution == (requires_live ? Evolution::None : Evolution::Normal));
     }
 
+    const std::array lethal{
+        Effect{Trigger::None, Operation::Damage, Target::BothLeaders, 3},
+        Effect{Trigger::None, Operation::Heal, Target::OwnLeader, 5},
+    };
     for (const auto& [rule, outcome] : {
             std::pair{SimultaneousLethal::SourceOpponent, Outcome::FirstWins},
             std::pair{SimultaneousLethal::NonActive, Outcome::SecondWins},
@@ -767,16 +797,233 @@ void effect_transitions() {
         Scenario simultaneous;
         simultaneous.rules.simultaneous_lethal = rule;
         simultaneous.player().leader_hp = simultaneous.player(1).leader_hp = 3;
-        const std::array script{
-            Effect{Trigger::None, Operation::Damage, Target::BothLeaders, 3},
-            Effect{Trigger::None, Operation::Heal, Target::OwnLeader, 5},
-        };
-        resolve_effect_steps(simultaneous.state, 1, script, 0, 0, simultaneous.rules);
+        resolve_effect_steps(simultaneous.state, 1, lethal, 0, 0, simultaneous.rules);
         CHECK(simultaneous.state.outcome == outcome && simultaneous.state.end_reason == EndReason::Health);
         CHECK(simultaneous.player().leader_hp == 0 && simultaneous.player(1).leader_hp == 0);
     }
+    for (const int active : {0, 1}) {
+        Scenario simultaneous;
+        simultaneous.state.turn_player = static_cast<std::uint8_t>(active);
+        simultaneous.player().leader_hp = simultaneous.player(1).leader_hp = 3;
+        resolve_effect_steps(simultaneous.state, 1 - active, lethal);
+        CHECK(simultaneous.state.outcome == (active == 0 ? Outcome::SecondWins : Outcome::FirstWins));
+        CHECK(simultaneous.state.end_reason == EndReason::Health && simultaneous.player(1 - active).leader_hp == 0);
+    }
 }
 
+void rabbit_collision_lethal() {
+    for (const int active : {0, 1}) {
+        const int defender = 1 - active;
+        Scenario s;
+        s.state.turn_player = static_cast<std::uint8_t>(active);
+        s.place(kRabbit, defender); // The opponent's rabbit was on the board first.
+        s.place(kRabbit, active);
+        s.player(active).leader_hp = s.player(defender).leader_hp = 2;
+        s.run({Attack, 0, 0});
+        CHECK(s.player(active).board_count == 0 && s.player(defender).board_count == 0);
+        CHECK(s.state.outcome == (active == 0 ? Outcome::FirstWins : Outcome::SecondWins));
+        CHECK(s.state.end_reason == EndReason::Health);
+        CHECK(s.player(active).leader_hp == 2 && s.player(defender).leader_hp == 0);
+    }
+}
+
+void attack_after_transform() {
+    Scenario attacked;
+    const auto source = attacked.place(kTrainer).creation_order;
+    attacked.place(kTrainer, 1);
+    attacked.run({Attack, 0, kEnemyLeader});
+    CHECK(attacked.player().board[0].attacked_this_turn);
+
+    struct Form {
+        CardId card;
+        Evolution evolution;
+        int bonus;
+        bool board_attack;
+        bool leader_attack;
+    };
+    for (const Form form : {
+            Form{kTrainer, Evolution::None, 0, false, false},
+            Form{kExias, Evolution::None, 0, true, false},
+            Form{kAlmiraj, Evolution::None, 0, true, true},
+            Form{kColette, Evolution::Normal, 2, true, false},
+            Form{kColette, Evolution::Super, 3, true, false}}) {
+        auto s = attacked;
+        const Effect transform{.operation = Operation::Transform, .target = Target::Self,
+                               .card = form.card, .transformed_evolution = form.evolution};
+        resolve_effect_steps(s.state, 0, std::array{transform}, source);
+        const auto& result = s.player().board[0];
+        const auto& printed = *find_card(form.card);
+        CHECK(result.creation_order == source && result.card_id == form.card && result.evolution == form.evolution);
+        CHECK(result.atk == printed.atk + form.bonus && result.hp == printed.hp + form.bonus);
+        CHECK(!result.attacked_this_turn && !result.readied);
+        CHECK(s.player(1).board[0].hp == 3); // Changing form does not trigger Colette's OnEvolved ability.
+        CHECK(s.legal({Attack, 0, kEnemyLeader}) == form.leader_attack);
+        CHECK(s.legal({Attack, 0, 0}) == form.board_attack);
+        if (form.board_attack) {
+            s.run({Attack, 0, 0});
+            s.reject({Attack, 0, kEnemyLeader});
+        }
+    }
+}
+
+void phase5_hand_and_rally() {
+    const auto* metadata = find_official_card(10031210);
+    CHECK(metadata && metadata->id == 122 && metadata->earth && metadata->implemented && !metadata->text.empty());
+    CHECK(find_official_card(10042310)->kind == Kind::Spell);
+    const auto id = [](std::uint32_t official) { return find_official_card(official)->id; };
+    Scenario combo;
+    combo.hand({kWingedStatue, kWingedStatue, id(10911110)});
+    combo.run({Play, 0});
+    combo.run({Play, 0});
+    combo.run({Play, 0});
+    CHECK(combo.player().plays_this_turn == 3 && combo.player().hand_count == 1 && combo.player().followers_entered == 1);
+    combo.next_own_turn();
+    CHECK(combo.player().plays_this_turn == 0 && combo.player().followers_entered == 1);
+    const std::array rally{
+        Effect{.operation=Operation::Summon, .amount=2, .card=kHolyFalcon},
+        Effect{.operation=Operation::Heal, .target=Target::OwnLeader, .amount=3,
+               .condition=Condition::Rally, .threshold=3},
+    };
+    combo.player().leader_hp = 14;
+    resolve_effect_steps(combo.state, 0, rally);
+    CHECK(combo.player().followers_entered == 3 && combo.player().leader_hp == 17);
+    resolve_effect_steps(combo.state, 0, std::array{rally[0]});
+    CHECK(combo.player().followers_entered == 3 && combo.player().board_count == 5);
+
+    Scenario boost;
+    const auto storm = id(10131320);
+    boost.hand({storm, kTestimony, storm});
+    boost.player().hand_modifiers[0].spellboost = 2;
+    boost.player().hand_modifiers[0].cost = -1;
+    boost.run({Play, 1, kNoTarget, 1});
+    CHECK(boost.player().hand_modifiers[0].spellboost == 3 && boost.player().hand_modifiers[1].spellboost == 1);
+    const auto carried = boost.player().hand_modifiers[0];
+    boost.player().deck_idx = boost.player().deck_end;
+    const std::array send{
+        Effect{.operation=Operation::ReturnToDeck, .target=Target::ChosenOwnHand},
+        Effect{.operation=Operation::Draw, .amount=1},
+    };
+    resolve_effect_steps(boost.state, 0, send, 0, kHandTargetFlag);
+    CHECK(boost.player().hand[1] == storm && boost.player().hand_modifiers[1] == carried);
+    CHECK(boost.player().hand_modifiers[0].spellboost == 1 && boost.player().deck_remaining() == 0);
+    boost.place(kCorrector, 1);
+    boost.run({Play, 1, 0});
+    CHECK(boost.player(1).board_count == 0 && boost.player().hand_modifiers[0].spellboost == 2);
+    const Effect discard{.operation=Operation::Discard, .amount=2};
+    boost.hand({kColette, kTestimony, kExias});
+    const auto shadows = boost.player().shadows;
+    resolve_effect_steps(boost.state, 0, std::array{discard});
+    CHECK(boost.player().hand_count == 1 && boost.player().shadows == shadows + 2);
+    CHECK(std::all_of(boost.player().destroyed_followers.begin(), boost.player().destroyed_followers.end(),
+                      [](auto value) { return value == 0; }));
+}
+
+void phase5_attacks_copy_and_earth() {
+    Scenario combat;
+    const auto monk = find_official_card(11061120)->id;
+    auto& original = combat.place(monk);
+    combat.run({Attack, 0, kEnemyLeader});
+    CHECK(original.attacked_this_turn && !original.attacked_twice);
+    combat.run({Attack, 0, kEnemyLeader});
+    CHECK(original.attacked_twice);
+    combat.reject({Attack, 0, kEnemyLeader});
+    original.hp -= 2;
+    const auto snapshot = original;
+    const auto helper = combat.place(kTrainer, 1).creation_order;
+    const std::array make_copy{Effect{.operation=Operation::Copy, .target=Target::Self}};
+    resolve_effect_steps(combat.state, 0, make_copy, snapshot.creation_order);
+    const auto& copy = combat.player().board[1];
+    CHECK(copy.creation_order != snapshot.creation_order && copy.hp == snapshot.hp && copy.max_hp == snapshot.max_hp);
+    CHECK(copy.atk == snapshot.atk && copy.abilities == snapshot.abilities && copy.modifiers == snapshot.modifiers);
+    CHECK(!copy.attacked_this_turn && !copy.attacked_twice && !copy.acted_this_turn);
+    CHECK(combat.player().followers_entered == 1 && combat.legal({Attack, 1, 0}) && helper > 0);
+
+    Scenario earth;
+    const std::array sigils{Effect{.operation=Operation::AddEarth, .amount=2},
+                           Effect{.operation=Operation::Summon, .amount=1, .card=122}};
+    resolve_effect_steps(earth.state, 0, sigils);
+    CHECK(earth.player().board_count == 1 && earth.player().board[0].earth_count == 3);
+    CHECK(!can_choose_enemy_permanent(earth.player().board[0]) && earth.player().shadows == 0);
+    const auto order = earth.player().board[0].creation_order;
+    std::array destroy{Effect{.operation=Operation::Destroy, .target=Target::ChosenEnemyPermanent}};
+    resolve_effect_steps(earth.state, 1, destroy, 0, order);
+    CHECK(earth.player().board_count == 1 && earth.player().board[0].earth_count == 3);
+    const std::array rite{Effect{.operation=Operation::EarthRite, .amount=3},
+                          Effect{.operation=Operation::Draw, .amount=1, .condition=Condition::CostPaid}};
+    resolve_effect_steps(earth.state, 0, rite);
+    CHECK(earth.player().board_count == 0 && earth.player().shadows == 1 && earth.player().hand_count == 1);
+    resolve_effect_steps(earth.state, 0, rite);
+    CHECK(earth.player().shadows == 1 && earth.player().hand_count == 1);
+}
+
+void phase5_pp_necromancy_and_reanimate() {
+    Scenario dragon;
+    dragon.player().max_pp = dragon.player().pp = 6;
+    dragon.player().bonus_pp = 1;
+    dragon.hand({find_official_card(11041310)->id, find_official_card(10042310)->id});
+    CHECK(dragon.player().available_pp() == 7 && !dragon.player().overflow());
+    dragon.run({Play, 0});
+    CHECK(dragon.player().max_pp == 6);
+    dragon.run({Play, 0});
+    CHECK(dragon.player().max_pp == 7 && dragon.player().overflow() && dragon.player().available_pp() == 1);
+    dragon.player().max_pp = dragon.player().pp = 9;
+    dragon.player().bonus_pp = 0;
+    dragon.hand({find_official_card(10042310)->id, find_official_card(10042310)->id});
+    dragon.run({Play, 0});
+    CHECK(dragon.player().max_pp == 10 && dragon.player().pp == 6 && dragon.player().hand_count == 2);
+    dragon.run({Play, 0});
+    CHECK(dragon.player().max_pp == 10 && dragon.player().pp == 3 && dragon.player().hand_count == 2);
+
+    Scenario shadow;
+    const auto mummy = find_official_card(10051130)->id;
+    shadow.hand({mummy, mummy});
+    shadow.player().shadows = 4;
+    shadow.run({Play, 0});
+    CHECK(shadow.player().shadows == 0 && shadow.legal({Attack, 0, kEnemyLeader}));
+    shadow.run({Play, 0});
+    CHECK(!shadow.legal({Attack, 1, kEnemyLeader}));
+
+    Scenario history;
+    history.player().destroyed_followers[kLilium - kFirstCard] = 1;
+    history.player().destroyed_followers[kExias - kFirstCard] = 3;
+    history.player().destroyed_followers[kTrainer - kFirstCard] = 9;
+    int older = 0;
+    for (int seed = 0; seed < 512; ++seed) {
+        auto sample = history;
+        sample.state.rng_state = static_cast<std::uint64_t>(seed);
+        resolve_effect_steps(sample.state, 0, std::array{Effect{.operation=Operation::Reanimate, .amount=2}});
+        CHECK(sample.player().board_count == 1 && sample.player().shadows == 0);
+        const auto summoned = sample.player().board[0].card_id;
+        CHECK(summoned == kLilium || summoned == kExias);
+        older += summoned == kLilium;
+    }
+    CHECK(older > 95 && older < 158);
+}
+
+void phase5_fusion_and_faith() {
+    Scenario fusion;
+    const auto host = find_official_card(11072310)->id;
+    fusion.hand({kEvidence, host, kWingedStatue, kEvidence, host});
+    fusion.run({Fuse, 1, kNoTarget, 3});
+    CHECK(fusion.player().hand_count == 3 && fusion.player().hand[0] == host && fusion.player().shadows == 0);
+    CHECK(fusion.player().hand_modifiers[0].fused_materials == 2 && fusion.player().board[0].card_id == kEvidence);
+    fusion.reject({Fuse, 0, kNoTarget, 1});
+    CHECK(fusion.legal({Fuse, 2, kNoTarget, 2}));
+    fusion.next_own_turn();
+    CHECK(fusion.legal({Fuse, 0, kNoTarget, 1}));
+
+    Scenario faith;
+    faith.crest(CrestId::Testimony, 2);
+    const std::array grant{Effect{.operation=Operation::GrantFaith, .card=kFaithToken}};
+    resolve_effect_steps(faith.state, 0, grant);
+    resolve_effect_steps(faith.state, 0, grant);
+    CHECK(faith.player().faith_count == 1 && faith.player().crest_count == 1);
+    // Populate four different faith slots to check the shared boundary with one crest.
+    faith.player().faiths = {kFaithToken, kLilium, kDunamis, kRapid, {}};
+    faith.player().faith_count = 4;
+    resolve_effect_steps(faith.state, 0, std::array{Effect{.operation=Operation::GrantCrest, .crest=CrestId::Rapid}});
+    CHECK(faith.player().faith_count == 4 && faith.player().crest_count == 1);
+}
 using Unit = std::pair<std::string_view, void (*)()>;
 constexpr std::array kUnits{
     Unit{"winged statue", winged_statue}, Unit{"Lilium", lilium}, Unit{"Exias", exias},
@@ -793,6 +1040,12 @@ constexpr std::array kUnits{
     Unit{"timeout and deck-out", timeout_and_deck_out},
     Unit{"rule variants and action limits", rule_variants_and_limits},
     Unit{"ability protection, zone changes, queued silence, and simultaneous lethal", effect_transitions},
+    Unit{"lethal Last Words when two rabbits trade", rabbit_collision_lethal},
+    Unit{"attack after transforming a follower that already attacked", attack_after_transform},
+    Unit{"JSON catalog, combo, rally, spellboost, deck return and discard", phase5_hand_and_rally},
+    Unit{"two attacks, copying and Earth Rite", phase5_attacks_copy_and_earth},
+    Unit{"overflow, PP cap, necromancy and weighted reanimate", phase5_pp_necromancy_and_reanimate},
+    Unit{"per-card fusion and shared faith slots", phase5_fusion_and_faith},
 };
 
 int units() {
@@ -806,7 +1059,7 @@ int units() {
             std::cerr << "FAIL " << name << ": " << error.what() << '\n';
         }
     }
-    std::cout << kUnits.size() - failures << '/' << kUnits.size() << " Phase 4A unit groups passed\n";
+    std::cout << kUnits.size() - failures << '/' << kUnits.size() << " WB unit groups passed\n";
     return failures == 0 ? 0 : 1;
 }
 
@@ -827,6 +1080,9 @@ void validate(const GameState& state, const GameState& before) {
         CHECK(seat == 1 || (!player.bonus_pp && !player.extra_pp_available && !player.extra_pp_uses));
         CHECK(player.bonus_pp == 0 || (seat == state.turn_player && !player.extra_pp_available));
         CHECK(player.extra_pp_uses <= 2 && player.extra_pp_uses >= prior.extra_pp_uses);
+        if (seat == 1 && player.extra_pp_uses == 0) {
+            CHECK(player.extra_pp_available);
+        }
         CHECK(player.hand_count <= kHandLimit && player.board_count <= kBoardLimit && player.crest_count <= kCrestLimit);
         CHECK(player.deck_idx >= prior.deck_idx && player.deck_idx <= kDeckSize && player.shadows >= prior.shadows);
         CHECK(player.ep <= 2 && player.sep <= 2 && player.ep <= prior.ep && player.sep <= prior.sep);
@@ -942,6 +1198,7 @@ int stress() {
 } // namespace
 
 int main(int argc, char** argv) {
+    std::cout << "GameState_size_bytes=" << sizeof(GameState) << '\n';
     if (argc == 1) {
         return units();
     }

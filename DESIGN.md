@@ -272,11 +272,13 @@ $analysisDir = Join-Path ([IO.Path]::GetTempPath()) "svwb-analysis"
 | 項目 | 既定値と切り替え |
 | --- | --- |
 | U01・U02 | 交換カードは交換後に戻してシャッフル。山札の末尾に戻す方式も選べる。PP・攻撃権の更新は開始時効果の前で、ドロー直前にする設定もある。 |
-| U03・U04 | クレストは個別の減少タイミングを使用し、該当する開始・終了時効果の後で減少する。同時リーサルの裁定と40ターン判定の前後を切り替えられる。 |
+| U03・U04 | クレストは個別の減少タイミングを使用し、該当する開始・終了時効果の後で減少する。同時リーサルは既定で非手番側の勝利。40ターン判定と終了時効果の前後を切り替えられる。 |
 | U05〜U08 | 超進化攻撃中の破壊は1体ごとに1点。0ダメージのバリア消費・誘発、攻撃不可の反撃、設置当日のアクト、変身後の同名回数を切り替えられる。 |
 | U09・U10 | 待機能力の解決時に発生源と能力の有効性を確認する。通常の同時誘発について優先度を変更できる。 |
 | U11・U12・U14 | クレスト満杯・満杯時の証拠合算・クレスト消滅時の墓場・ランダム対象の抽選時点を切り替えられる。 |
 | カード固有 | 手札0枚の兎は既定で自動進化しない。能力消去は既定で超進化固有能力も無効にする。 |
+
+変身で個体の攻撃済み状態をリセットする。変身先に突進・疾走がある場合や、進化後・超進化後の姿に変身する場合は、そのターンにも攻撃できる。同名カードのターン内行動上限と攻撃対象の制限は変身先に適用する。後攻のエクストラPPは1〜5ターン目に使用した場合だけ6ターン目開始時に補充される。6ターン目開始時点で未使用なら初回の使用権を持ち越し、その後に使用できるのは1回。
 
 コスト変更の組み合わせ、融合、リアニメイトなど、今回のカードに登場しない仕組みは、この段階の検証範囲外。
 
@@ -315,3 +317,55 @@ Windows x64 ReleaseのCTestは8/8、WB単体は27/27グループがPASS。確定
 固定モデルの2,000試合では先攻978勝（48.90%）、後攻1,022勝（51.10%）、両者敗北0件。平均手番数は14.6245、平均決着ラウンドは7.5570。対ランダム評価は200勝／200試合。最終評価の所要時間は107.690秒。成果物の入口は `data/phase4b-mirror/report.md`。
 
 初手CSVの合算では15種とも保持・非保持を比較できた。先攻の地害の矯正者、後攻の投影の鳥像は元の手札から保持した実績が0件だったため、該当する保持差は空欄。マリガン後の初手における存在・不在の差は全45行で算出できた。
+
+### 第25世代モデルとのローカル対戦
+
+リポジトリルートから Windows x64 Release をビルドして起動する。Web サーバーは Python 標準ライブラリで動作する。
+
+```powershell
+cmake -S . -B build/windows-release -G "Visual Studio 17 2022" -A x64
+cmake --build build/windows-release --config Release --target svwb_play_cli
+python python/play_ui.py --weights data/phase4b-mirror/generation_025/weights.bin --port 8000
+```
+
+[ローカル対戦画面](http://127.0.0.1:8000/) で手番と探索回数を選び、新規対局を開始する。初手で交換するカードを選び、マリガンを確定する。手札や盤面のカードをクリックすると、選べる行動と対象が表示される。AIは自分の手番を自動で実行し、行動順、AI側から見たMCTSの評価値、候補ごとの訪問割合を記録する。未採用候補の非公開カードは伏せて表示する。
+
+別のビルド先は `--exe`、同じ初手で試す場合は `--seed` をサーバーに指定する。1サーバーにつき1対局で、再読み込みすると進行中の局面を取得する。終了はターミナルで Ctrl+C。
+
+`svwb_play_cli --weights FILE [--simulations 64] [--seed INTEGER]` は標準入出力を使い、UTF-8のJSONを1行ずつやり取りする。リクエストは `command` に操作名を指定する。
+
+| 操作 | リクエストのフィールド |
+| --- | --- |
+| `new_game` | `seat` に `first`、`second`、`random` のいずれか。`seed` と `simulations` は省略可。 |
+| `mulligan` | `mask` に0〜15。下位ビットから初手の各枠に対応し、立っているビットのカードを交換する。 |
+| `act` | 直前の局面に含まれる `legal_actions` から `action_index` を指定する。 |
+| `ai_turn` | AIの手番に呼び出す。選択手順と候補を `ai_turn` で返す。 |
+| `analyze_turn` | 人間の手番に呼び出す。局面を進めず、現在の `revision` から探索した候補を `analysis` で返す。候補の `first_action_index` は `legal_actions` の索引。 |
+| `state` | 現在の状態を取得する。対局開始前は `null`。 |
+
+成功時は `ok` と `state` を返す。`debug: true` を指定すると、その応答に相手手札の詳細が含まれる。`mulligan`、`act`、`ai_turn` では、直前の状態の `revision` を指定すると古い局面への操作を検出できる。本戦は Phase 4B と同じ完全情報近似の探索を使う。
+
+「あなたの候補手」には、手番開始時と行動後に現在の局面から探索した上位のターン内手順、手番側から見た評価値、訪問割合が表示される。候補内で未公開のカードを引いた後の手札プレイは、カード名を伏せる。
+
+### Phase 5A データ駆動のカード定義と任意対面
+
+公式メタデータ469枚と補足4ファイルを `data/cards/` に格納する。ビルド時に `python/generate_cards.py` が静的データと `engine_cards.json` を検証し、C++テーブルを生成する。公式IDはデッキファイルと対応し、旧ミラーの内部IDは従来のまま使う。補足で定義が未確定のトークンとクレストは、実装済みの効果から参照できる定義を追加するまで実戦に使えない。
+
+カードの効果を追加する場合は `engine_cards.json` に公式ID、内部ID、発動条件、対象、処理手順を登録する。汎用処理は `Operation`、発動条件は `Condition` を使う。複雑な処理は `Custom` と `CardHandler` から呼ぶ。召喚先などのカードを参照する処理では、公式IDを `card_id` で指定できる。次に `cpp/tests/test_wb.cpp` で成功・条件不足・対象不在などの局面を確認する。
+
+デッキJSONは `name` と `cards` を持つ。各カード行に `card_id`（公式ID）と `copies`（1〜3）を指定し、合計40枚にする。用意したビショップ2種はセットの例。裁定は後攻6ターン目まで持ち越した初回エクストラPPや、非手番側が勝つ同時リーサルを含む。
+
+```powershell
+cmake -S . -B build/phase5a-release -G "Visual Studio 17 2022" -A x64
+cmake --build build/phase5a-release --config Release
+ctest --test-dir build/phase5a-release -C Release --output-on-failure
+python python/matchup_matrix.py --exe build/phase5a-release/Release/svwb_ai.exe --output-dir data/phase5a-matchups data/decks/bishop-mirror.json data/decks/bishop-monk.json
+python python/run_loop.py --exe build/phase5a-release/Release/svwb_ai.exe --deck-a data/decks/bishop-mirror.json --deck-b data/decks/bishop-monk.json --output-dir data/phase5a-training
+python python/play_ui.py --exe build/phase5a-release/Release/svwb_play_cli.exe --port 8004
+```
+
+任意対面では両デッキ、結晶、実装済み効果から参照するカードを収集し、先後共通の対面ローカルIDを割り当てる。入力は256次元、中間層は64 → 32。学習する対面の `matchup_features.json` はリプレイと重みに付随する。旧ミラーの第25世代モデルは旧ミラーの特徴量を使って再生できる。新しい対面の評価には、そのローカルID体系で学習した重みを指定する。相性表に対面別の重みを用意する場合は `--models` に `matchups` の配列を含むJSONを渡す。配列要素には `deck_a`、`deck_b`、`weights` と任意の `opponent_weights` を記述する。
+
+Webのデッキ選択肢は `--deck-dir` 配下のJSON、モデル選択肢は `--models-dir` 配下の `weights.bin` を読む。モデルとデッキは試合開始時に決まる。`GameState` は固定長PODで、山札領域は80枚、旧カード以外の同名行動・破壊履歴は64種分を確保する。`test_wb` は状態のサイズを出力し、正確なビショップミラーで状態の不変条件を確認する。
+
+Windows x64 Releaseで `GameState` は3,552バイト。CTest 9件、WBの単体33グループが通過した。確定ミラー10,000試合では685,448行動を検証し、状態不整合0件。3回の中央値は0.529秒で、同時に計測した旧版の0.481秒に対して約10%増。第25世代モデルの16試合・1スレッド・64シミュレーションで、Phase 5Aは14.978秒、前後に計測した旧版は15.051秒と14.892秒だった。

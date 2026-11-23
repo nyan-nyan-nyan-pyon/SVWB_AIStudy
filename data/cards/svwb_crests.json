@@ -1,0 +1,342 @@
+[
+  {
+    "name": "わだつみの精",
+    "source_card_ids": [
+      10841130
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "イステンデッドVSマルチルゲート",
+    "source_card_ids": [
+      10954110
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "インソムニアウィッチ",
+    "source_card_ids": [
+      10532110
+    ],
+    "effect_text": "【カウントダウン_2】\n【ラストワード】場のフォロワーすべてに3ダメージ。",
+    "countdown": 2,
+    "status": "verified_secondary_source",
+    "source_url": "https://shadowverse-magazine.com/svwb/cardpack/all-cards/c10532110/"
+  },
+  {
+    "name": "ディメンションストレンジャー",
+    "source_card_ids": [
+      11074120
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "ドゥームズチェンジ・グレモリー",
+    "source_card_ids": [
+      11054120
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "ノインハウエルの尋問",
+    "source_card_ids": [
+      11033310
+    ],
+    "effect_text": "自分がアミュレットを【アクト】したとき、下記の能力から順に1つの働いていない能力が働く。\n（1）相手の場のフォロワーからランダム1枚に3ダメージ。\n（2）自分のリーダーを2回復。\n（3）自分のEPを1回復。これを破壊。",
+    "countdown": null,
+    "status": "verified_secondary_source",
+    "source_url": "https://shadowverse-magazine.com/svwb/cardpack/all-cards/c11033310/"
+  },
+  {
+    "name": "マナリアスクリプター・ティコ",
+    "source_card_ids": [
+      10833110
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "万術の咎人・セフィー",
+    "source_card_ids": [
+      10934110
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "万食のアナテマ・ララアンセム",
+    "source_card_ids": [
+      10734110
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "不毛の証言",
+    "source_card_ids": [
+      11063310
+    ],
+    "effect_text": "【カウントダウン_2】\n自分のターン開始時、自分のリーダーを1回復。『神域の物証』1枚を自分の手札に加える。",
+    "countdown": 2,
+    "status": "verified_secondary_source",
+    "source_url": "https://shadowverse-magazine.com/svwb/cardpack/all-cards/c11063310/"
+  },
+  {
+    "name": "充つ《恋人と節制》・ミルティオ＆ルーゼン",
+    "source_card_ids": [
+      10554110
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "千金の大参謀・アルメリゼ",
+    "source_card_ids": [
+      11024120
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "厳酷なる奥夜花",
+    "source_card_ids": [
+      10553310
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "反照の赤紅・ドラーク＆アルザード",
+    "source_card_ids": [
+      10844110
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "地害の三悪・ラピッドハット",
+    "source_card_ids": [
+      11064110
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "威風の行軍",
+    "source_card_ids": [
+      10622310
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "害意の拡大",
+    "source_card_ids": [
+      10713310
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "希望の光彩・リテュエル",
+    "source_card_ids": [
+      10864120
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "廻る《運命の輪》・スロース",
+    "source_card_ids": [
+      10574110
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "憂慮の縮小",
+    "source_card_ids": [
+      10712310
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "操嵩のアナテマ・ダストデイズ",
+    "source_card_ids": [
+      10714110
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "束刃の咎人・カットスロート",
+    "source_card_ids": [
+      10974110
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "歩む《愚者》・リンクル",
+    "source_card_ids": [
+      10534110
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "氷界の鹿王",
+    "source_card_ids": [
+      10714120
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "波揺花・ユウベ",
+    "source_card_ids": [
+      10544120
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "特記標的・ヘイレムハニィ",
+    "source_card_ids": [
+      10704110
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "神紋の咎人・エルラーデ",
+    "source_card_ids": [
+      10964110
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "統音のアナテマ・ギルダリア",
+    "source_card_ids": [
+      10724110
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "迷歌探偵・ノインハウエル",
+    "source_card_ids": [
+      11034110
+    ],
+    "effect_text": "自分がアミュレットを【アクト】したとき、自分のターンごとに1回、自分のPPを1回復。",
+    "countdown": null,
+    "status": "verified_secondary_source",
+    "source_url": "https://shadowverse-magazine.com/svwb/cardpack/all-cards/c11034110/"
+  },
+  {
+    "name": "霧巻花・クキシロ",
+    "source_card_ids": [
+      10564120
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "飛躍の姉妹・ベルディリア＆カステル",
+    "source_card_ids": [
+      10864110
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "魔恋の慕情・シイム",
+    "source_card_ids": [
+      10634110
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "鳥獣の述懐",
+    "source_card_ids": [
+      11012310
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  },
+  {
+    "name": "麗金花・ウンケイ",
+    "source_card_ids": [
+      10524120
+    ],
+    "effect_text": null,
+    "countdown": null,
+    "status": "unresolved",
+    "source_url": null
+  }
+]

@@ -2,6 +2,7 @@
 
 #include "wb_rules.hpp"
 
+#include <filesystem>
 #include <span>
 #include <string_view>
 
@@ -28,24 +29,30 @@ inline constexpr CardId kSplendidHawk = 118;
 inline constexpr CardId kHealingSister = 119;
 inline constexpr CardId kAlmirajCrystal = 120;
 inline constexpr CardId kCorrector = 121;
+inline constexpr CardId kEarthSigil = 123;
+inline constexpr CardId kFaithToken = 124;
 inline constexpr int kDeckCardKinds = 15;
 inline constexpr int kEffectSlots = 8;
 inline constexpr std::uint8_t kEnhancedMode = 4;
 
-enum class Kind : std::uint8_t { Follower, Amulet, Spell };
+enum class Kind : std::uint8_t { Follower, Amulet, Spell, Faith };
 enum class Trigger : std::uint8_t {
     None, OnPlay, OnEnter, OnEvolve, OnSuperEvolve, OnEvolved, LastWords, OnAct,
-    TurnStart, TurnEnd, EnemyTurnEnd, OnAttack, OnClash, OnDamage,
+    TurnStart, TurnEnd, EnemyTurnEnd, OnAttack, OnClash, OnDamage, OnFuse,
 };
 enum class Operation : std::uint8_t {
     Damage, Heal, Draw, AddHand, Summon, SummonModified, SummonEvolved, ReduceCountdown, SpendClue,
     Silence, Banish, Destroy, Transform, Bounce, RestorePp, GrantCrest, ExtendCrest,
-    EvolveWithAlly, BanishLowestAndEvolve,
+    Buff, ReturnToDeck, Copy, IncreaseMaxPp, Necromancy, EarthRite, AddEarth, Reanimate,
+    GrantFaith, Discard, Custom,
 };
 enum class Target : std::uint8_t {
     None, Self, OwnLeader, EnemyLeader, ChosenEnemyFollower, ChosenEnemyPermanent, AllEnemyFollowers,
-    RandomEnemyFollower, BothLeaders,
+    RandomEnemyFollower, BothLeaders, ChosenOwnFollower, ChosenOwnPermanent, ChosenOwnHand,
 };
+enum class Condition : std::uint8_t { Always, Combo, Rally, Overflow, CostPaid, AtMaxPp, Fused, NotFused };
+enum class CardHandler : std::uint8_t { None, EvolveWithAlly, BanishLowestAndEvolve };
+enum class FusionMaterial : std::uint8_t { None, Any, Follower, Spell, Amulet, SameClass, Trait };
 
 struct Effect {
     Trigger trigger = Trigger::None;
@@ -57,6 +64,11 @@ struct Effect {
     std::uint8_t mode = 0;
     CrestId crest = CrestId::None;
     std::uint16_t granted_abilities = 0;
+    Evolution transformed_evolution = Evolution::None;
+    Condition condition = Condition::Always;
+    int threshold = 0;
+    CardHandler handler = CardHandler::None;
+    int spellboost_multiplier = 0;
 };
 
 struct CardDef {
@@ -75,6 +87,19 @@ struct CardDef {
     bool clue = false;
     std::array<Effect, kEffectSlots> effects{};
     std::uint32_t official_id = 0;
+    std::string_view class_name{};
+    std::string_view traits{}; // newline-delimited labels from the catalog
+    std::string_view keywords{};
+    std::string_view text{};
+    std::string_view evolved_text{};
+    std::span<const CardId> related{};
+    bool implemented = false;
+    bool deck_eligible = false;
+    bool earth = false;
+    bool spellboost = false;
+    int spellboost_cost_reduction = 0;
+    FusionMaterial fusion = FusionMaterial::None;
+    std::string_view fusion_trait{};
 };
 
 struct CrestDef {
@@ -85,9 +110,12 @@ struct CrestDef {
 };
 
 [[nodiscard]] const CardDef* find_card(CardId id);
+[[nodiscard]] const CardDef* find_official_card(std::uint32_t id);
 [[nodiscard]] const CrestDef* find_crest(CrestId id);
 [[nodiscard]] CardId printed_card(CardId id);
 [[nodiscard]] bool is_deck_card(CardId id);
+[[nodiscard]] Deck read_deck(const std::filesystem::path& path);
+[[nodiscard]] int card_cost(const CardDef& card, CardModifiers modifiers);
 
 // Resolves already-selected effect steps in order, using Trigger::None for immediate steps.
 // Source and selected target are stable creation IDs, or zero when absent.

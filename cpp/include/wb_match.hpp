@@ -1,6 +1,7 @@
 #pragma once
 
 #include "search.hpp"
+#include "wb_cards.hpp"
 
 namespace svwb::wb {
 
@@ -19,6 +20,8 @@ struct MatchOptions {
     bool evaluate;
     bool random_opponent;
     SearchOptions search;
+    Deck deck_a = kMirrorDeck;
+    Deck deck_b = kMirrorDeck;
 };
 
 void run_match(const MatchOptions& options);

@@ -1,6 +1,7 @@
 #include "wb_cards.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cassert>
 #include <limits>
 #include <stdexcept>
@@ -11,6 +12,8 @@ namespace svwb::wb {
 namespace {
 
 using enum Trigger;
+
+constexpr int kExtraPpRefillTurn = 6;
 
 struct Ref {
     int seat = 0;
@@ -33,8 +36,44 @@ bool follower(const Permanent& object) {
     return definition(object.card_id).kind == Kind::Follower;
 }
 
+void set_evolved_form(Permanent& object, Evolution evolution) {
+    object.evolution = evolution;
+    object.abilities |= FLAG_RUSH;
+    const int bonus = evolution == Evolution::Super ? 3 : 2;
+    object.atk = static_cast<std::int16_t>(object.atk + bonus);
+    object.hp = static_cast<std::int16_t>(object.hp + bonus);
+    object.max_hp = static_cast<std::int16_t>(object.max_hp + bonus);
+}
+
+bool legacy_counter(CardId card) {
+    return card >= kFirstCard && card <= kLastForm;
+}
+
+CardCounters& ensure_counter(PlayerState& player, CardId id) {
+    auto end = player.other_counters.begin() + player.other_counter_count;
+    auto item = std::find_if(player.other_counters.begin(), end, [id](const auto& entry) { return entry.id == id; });
+    if (item == end) {
+        if (player.other_counter_count == kAdditionalCardCounters) {
+            throw std::logic_error("Too many distinct card counters in one match");
+        }
+        *item = {id, 0, {}};
+        ++player.other_counter_count;
+    }
+    return *item;
+}
+
 NamedActions& counts(PlayerState& player, CardId card) {
-    return player.actions[printed_card(card) - kFirstCard];
+    const auto id = printed_card(card);
+    return legacy_counter(id) ? player.actions[id - kFirstCard] : ensure_counter(player, id).actions;
+}
+
+NamedActions used_actions(const PlayerState& player, CardId card) {
+    const auto id = printed_card(card);
+    if (legacy_counter(id)) return player.actions[id - kFirstCard];
+    for (int i = 0; i < player.other_counter_count; ++i) {
+        if (player.other_counters[i].id == id) return player.other_counters[i].actions;
+    }
+    return {};
 }
 
 int ply(const GameState& state) {
@@ -77,9 +116,17 @@ int clue_slot(const PlayerState& player) {
     return -1;
 }
 
+int earth_slot(const PlayerState& player) {
+    for (int i = 0; i < player.board_count; ++i) {
+        if (player.board[i].earth_count != 0) return i;
+    }
+    return -1;
+}
+
 bool can_enter(const PlayerState& player, const CardDef& card, const RuleConfig& rules) {
-    return card.kind == Kind::Spell || player.board_count < kBoardLimit ||
-        (card.clue && rules.merge_clue_on_full_board && clue_slot(player) >= 0);
+    return card.kind == Kind::Spell || (card.kind != Kind::Faith &&
+        (player.board_count < kBoardLimit || (card.earth && earth_slot(player) >= 0) ||
+         (card.clue && rules.merge_clue_on_full_board && clue_slot(player) >= 0)));
 }
 
 std::uint64_t random_word(GameState& state) {
@@ -100,9 +147,11 @@ int random_index(GameState& state, int count) {
     return static_cast<int>(word % bound);
 }
 
-void shuffle(GameState& state, Deck& deck, int first) {
-    for (int i = static_cast<int>(deck.size()) - 1; i > first; --i) {
-        std::swap(deck[i], deck[first + random_index(state, i - first + 1)]);
+void shuffle(GameState& state, PlayerState& player, int first) {
+    for (int i = player.deck_end - 1; i > first; --i) {
+        const int other = first + random_index(state, i - first + 1);
+        std::swap(player.deck[i], player.deck[other]);
+        std::swap(player.deck_modifiers[i], player.deck_modifiers[other]);
     }
 }
 
@@ -112,12 +161,39 @@ void spend(PlayerState& player, int amount) {
     player.bonus_pp = static_cast<std::uint8_t>(player.bonus_pp - (amount - regular));
 }
 
-void add_card(PlayerState& player, CardId id) {
+void add_card(PlayerState& player, CardId id, CardModifiers modifiers = {}) {
     if (player.hand_count == kHandLimit) {
         ++player.shadows;
     } else {
-        player.hand[player.hand_count++] = id;
+        player.hand[player.hand_count] = id;
+        player.hand_modifiers[player.hand_count++] = modifiers;
     }
+}
+
+void erase_hand(PlayerState& player, int index) {
+    std::move(player.hand_modifiers.begin() + index + 1, player.hand_modifiers.begin() + player.hand_count,
+              player.hand_modifiers.begin() + index);
+    player.hand_modifiers[player.hand_count - 1] = {};
+    erase(player.hand, player.hand_count, index);
+}
+
+void return_to_deck(GameState& state, PlayerState& player, CardId id, CardModifiers modifiers) {
+    if (player.deck_end == kDeckCapacity) {
+        if (player.deck_idx == 0) throw std::logic_error("Deck capacity exceeded");
+        const auto remaining = player.deck_remaining();
+        std::move(player.deck.begin() + player.deck_idx, player.deck.begin() + player.deck_end, player.deck.begin());
+        std::move(player.deck_modifiers.begin() + player.deck_idx, player.deck_modifiers.begin() + player.deck_end,
+                  player.deck_modifiers.begin());
+        player.deck_end = static_cast<std::uint8_t>(remaining);
+        player.deck_idx = 0;
+    }
+    const auto slot = player.deck_idx + random_index(state, player.deck_remaining() + 1);
+    std::move_backward(player.deck.begin() + slot, player.deck.begin() + player.deck_end, player.deck.begin() + player.deck_end + 1);
+    std::move_backward(player.deck_modifiers.begin() + slot, player.deck_modifiers.begin() + player.deck_end,
+                       player.deck_modifiers.begin() + player.deck_end + 1);
+    player.deck[slot] = id;
+    player.deck_modifiers[slot] = modifiers;
+    ++player.deck_end;
 }
 
 void lose(GameState& state, int seat, EndReason reason) {
@@ -128,11 +204,12 @@ void lose(GameState& state, int seat, EndReason reason) {
 void draw(GameState& state, int seat, int amount) {
     auto& player = state.players[seat];
     for (int i = 0; i < amount; ++i) {
-        if (player.deck_idx == kDeckSize) {
+        if (player.deck_idx == player.deck_end) {
             lose(state, seat, EndReason::EmptyDeck);
             return;
         }
-        add_card(player, player.deck[player.deck_idx++]);
+        const auto slot = player.deck_idx++;
+        add_card(player, player.deck[slot], player.deck_modifiers[slot]);
     }
 }
 
@@ -142,15 +219,29 @@ struct PlayCost {
     bool enhanced;
 };
 
-PlayCost play_cost(const CardDef& card, int pp) {
+PlayCost play_cost(const CardDef& card, int pp, CardModifiers modifiers) {
     if (card.enhance_cost > 0 && pp >= card.enhance_cost) {
         return {card, card.enhance_cost, true};
     }
-    if (pp < card.cost && card.crystal_form != 0) {
+    const auto price = card_cost(card, modifiers);
+    if (pp < price && card.crystal_form != 0) {
         const auto& form = definition(card.crystal_form);
         return {form, form.cost, false};
     }
-    return {card, card.cost, false};
+    return {card, price, false};
+}
+
+EntityId chosen_entity(const GameState& state, Action action, bool consumes_source = false) {
+    if (action.dst < 0) return 0;
+    const int seat = state.turn_player;
+    if (action.dst >= kOwnHandTarget) {
+        const int slot = action.dst - kOwnHandTarget;
+        return kHandTargetFlag | static_cast<EntityId>(slot - (consumes_source && slot > action.src));
+    }
+    if (action.dst >= kOwnBoardTarget) {
+        return state.players[seat].board[action.dst - kOwnBoardTarget].creation_order;
+    }
+    return state.players[1 - seat].board[action.dst].creation_order;
 }
 
 bool takes_mode(const Effect& effect, int mode) {
@@ -160,7 +251,9 @@ bool takes_mode(const Effect& effect, int mode) {
 Target chosen_target(const CardDef& card, Trigger trigger, int mode) {
     for (const auto& effect : card.effects) {
         if (effect.trigger == trigger && takes_mode(effect, mode) &&
-            (effect.target == Target::ChosenEnemyFollower || effect.target == Target::ChosenEnemyPermanent)) {
+            (effect.target == Target::ChosenEnemyFollower || effect.target == Target::ChosenEnemyPermanent ||
+             effect.target == Target::ChosenOwnFollower || effect.target == Target::ChosenOwnPermanent ||
+             effect.target == Target::ChosenOwnHand)) {
             return effect.target;
         }
     }
@@ -181,7 +274,53 @@ struct Ability {
     CrestId crest = CrestId::None;
     EntityId chosen = 0;
     int mode = 0;
+    int spellboost = 0;
+    int fused_materials = 0;
 };
+
+bool fusion_matches(const CardDef& host, const CardDef& material) {
+    switch (host.fusion) {
+    case FusionMaterial::None: return false;
+    case FusionMaterial::Any: return true;
+    case FusionMaterial::Follower: return material.kind == Kind::Follower;
+    case FusionMaterial::Spell: return material.kind == Kind::Spell;
+    case FusionMaterial::Amulet: return material.kind == Kind::Amulet;
+    case FusionMaterial::SameClass: return material.class_name == host.class_name;
+    case FusionMaterial::Trait: {
+        auto traits = material.traits;
+        while (!traits.empty()) {
+            const auto newline = traits.find('\n');
+            if (traits.substr(0, newline) == host.fusion_trait) return true;
+            if (newline == std::string_view::npos) break;
+            traits.remove_prefix(newline + 1);
+        }
+        return false;
+    }
+    }
+    return false;
+}
+
+bool condition_met(const PlayerState& player, const Effect& effect, const Ability& ability, bool paid) {
+    switch (effect.condition) {
+    case Condition::Always: return true;
+    case Condition::Combo: return player.plays_this_turn >= effect.threshold;
+    case Condition::Rally: return player.followers_entered >= effect.threshold;
+    case Condition::Overflow: return player.overflow();
+    case Condition::CostPaid: return paid;
+    case Condition::AtMaxPp: return player.max_pp == kMaxPp;
+    case Condition::Fused: return ability.fused_materials > 0;
+    case Condition::NotFused: return ability.fused_materials == 0;
+    }
+    return false;
+}
+
+void grant_faith(PlayerState& player, CardId card) {
+    const auto end = player.faiths.begin() + player.faith_count;
+    if (player.faith_count + player.crest_count < kCrestLimit && definition(card).kind == Kind::Faith &&
+        std::find(player.faiths.begin(), end, card) == end) {
+        player.faiths[player.faith_count++] = card;
+    }
+}
 
 const std::array<Effect, kEffectSlots>& script(const Ability& ability) {
     if (ability.crest != CrestId::None) {
@@ -200,6 +339,7 @@ public:
     void manual_evolve(Action action);
     void act(Action action);
     void attack(Action action);
+    void fuse(Action action);
     void start_turn();
     void end_turn();
     void immediate(int owner, std::span<const Effect> effects, EntityId source, EntityId target);
@@ -220,8 +360,10 @@ private:
     void collect_dead(Ref cause);
     void evolve(Ref ref, Evolution evolution, bool manual, EntityId chosen = 0);
     void effect(const Ability& ability, const Effect& effect, EntityId random_target);
+    void custom_effect(CardHandler handler, Ref source, Ref target);
     EntityId random_enemy(int owner);
-    Ref enter(int seat, CardId card, int atk_delta = 0, int hp_delta = 0, std::uint16_t flags = 0);
+    Ref enter(int seat, CardId card, CardModifiers modifiers = {});
+    void reanimate(int seat, int cost);
     void grant_crest(int seat, CrestId id);
     void tick_crests(int seat, CrestClock clock);
     void refresh(int seat);
@@ -245,14 +387,15 @@ void Resolver::enqueue(Ability ability) {
 
 void Resolver::board_ability(Ref ref, Trigger trigger, EntityId chosen, int mode) {
     if (const auto* object = find(state_, ref); object && !object->silenced) {
-        enqueue({trigger, Origin::Board, ref, object->card_id, CrestId::None, chosen, mode});
+        enqueue({trigger, Origin::Board, ref, object->card_id, CrestId::None, chosen, mode,
+                 object->modifiers.spellboost, object->modifiers.fused_materials});
     }
 }
 
 void Resolver::flush() {
     const auto priority = [&](const Ability& ability) {
         if (ability.trigger == OnPlay || ability.trigger == OnEvolve ||
-            ability.trigger == OnSuperEvolve || ability.trigger == OnAct) {
+            ability.trigger == OnSuperEvolve || ability.trigger == OnAct || ability.trigger == OnFuse) {
             return Priority::Manual;
         }
         if (ability.origin == Origin::Removed) {
@@ -343,7 +486,7 @@ void Resolver::heal_leader(int seat, int amount) {
 
 void Resolver::destroy(Ref target, Ref cause, bool by_ability, std::vector<Ability>* deferred) {
     auto* object = find(state_, target);
-    if (!object || (by_ability && (object->clue_count > 0 || protected_super(target, *object)))) {
+    if (!object || (by_ability && (object->clue_count > 0 || object->earth_count > 0 || protected_super(target, *object)))) {
         return;
     }
     auto& player = state_.players[target.seat];
@@ -351,7 +494,8 @@ void Resolver::destroy(Ref target, Ref cause, bool by_ability, std::vector<Abili
     erase(player.board, player.board_count, static_cast<int>(object - player.board.data()));
     ++player.shadows;
     if (follower(removed)) {
-        ++player.destroyed_followers[printed_card(removed.card_id) - kFirstCard];
+        const auto card = printed_card(removed.card_id);
+        ++(legacy_counter(card) ? player.destroyed_followers[card - kFirstCard] : ensure_counter(player, card).destroyed);
     }
     if (!removed.silenced) {
         const Ability last_words{LastWords, Origin::Removed, target, removed.card_id};
@@ -430,9 +574,19 @@ void Resolver::run_steps(const Ability& ability, std::span<const Effect> effects
             }
         }
     }
+    auto& player = state_.players[ability.source.seat];
+    bool paid = false;
     for (std::size_t i = 0; i < effects.size() && state_.outcome == Outcome::Ongoing; ++i) {
         const auto& step = effects[i];
-        if (step.trigger == ability.trigger && takes_mode(step, ability.mode)) {
+        if (step.trigger == ability.trigger && takes_mode(step, ability.mode) && condition_met(player, step, ability, paid)) {
+            if (step.operation == Operation::Necromancy) {
+                paid = step.amount >= 0 && player.shadows >= step.amount;
+                if (!paid) continue;
+            } else if (step.operation == Operation::EarthRite) {
+                const int slot = earth_slot(player);
+                paid = step.amount > 0 && slot >= 0 && player.board[slot].earth_count >= step.amount;
+                if (!paid) continue;
+            }
             effect(ability, step, picked[i]);
             settle(ability.source);
         }
@@ -446,13 +600,13 @@ void Resolver::immediate(int owner, std::span<const Effect> effects, EntityId so
     }
 }
 
-Ref Resolver::enter(int seat, CardId card, int atk_delta, int hp_delta, std::uint16_t flags) {
+Ref Resolver::enter(int seat, CardId card, CardModifiers modifiers) {
     const auto& def = definition(card);
     auto& player = state_.players[seat];
     if (!can_enter(player, def, rules_)) {
         return {};
     }
-    assert(def.kind != Kind::Spell);
+    assert(def.kind == Kind::Follower || def.kind == Kind::Amulet);
     int clues = 0;
     if (def.clue) {
         clues = 1;
@@ -462,14 +616,24 @@ Ref Resolver::enter(int seat, CardId card, int atk_delta, int hp_delta, std::uin
             erase(player.board, player.board_count, old);
         }
     }
+    int earth = 0;
+    if (def.earth) {
+        earth = 1;
+        const int old = earth_slot(player);
+        if (old >= 0) {
+            earth += player.board[old].earth_count;
+            erase(player.board, player.board_count, old);
+        }
+    }
     const Ref ref{seat, state_.next_creation_order++};
-    const auto hp = static_cast<std::int16_t>(def.hp + hp_delta);
+    const auto hp = static_cast<std::int16_t>(def.hp + modifiers.defense);
     player.board[player.board_count++] = {
-        ref.order, card, static_cast<std::int16_t>(std::max(0, def.atk + atk_delta)), hp, hp,
-        static_cast<std::uint16_t>(def.abilities | flags), static_cast<std::uint16_t>(clues),
+        ref.order, card, static_cast<std::int16_t>(std::max(0, def.atk + modifiers.attack)), hp, hp,
+        static_cast<std::uint16_t>(def.abilities | modifiers.abilities), static_cast<std::uint16_t>(clues),
         static_cast<std::uint8_t>(def.countdown), static_cast<std::uint8_t>(ply(state_)),
-        Evolution::None, false, false, false, false,
+        Evolution::None, false, false, false, false, false, static_cast<std::uint16_t>(earth), modifiers,
     };
+    if (def.kind == Kind::Follower) ++player.followers_entered;
     board_ability(ref, OnEnter);
     return ref;
 }
@@ -479,12 +643,7 @@ void Resolver::evolve(Ref ref, Evolution evolution, bool manual, EntityId chosen
     if (!object || !follower(*object) || object->evolution != Evolution::None || object->hp <= 0) {
         return;
     }
-    object->evolution = evolution;
-    object->abilities |= FLAG_RUSH;
-    const int bonus = evolution == Evolution::Super ? 3 : 2;
-    object->atk = static_cast<std::int16_t>(object->atk + bonus);
-    object->hp = static_cast<std::int16_t>(object->hp + bonus);
-    object->max_hp = static_cast<std::int16_t>(object->max_hp + bonus);
+    set_evolved_form(*object, evolution);
     if (manual) {
         auto& player = state_.players[ref.seat];
         --(evolution == Evolution::Super ? player.sep : player.ep);
@@ -511,18 +670,54 @@ EntityId Resolver::random_enemy(int owner) {
 }
 
 void Resolver::grant_crest(int seat, CrestId id) {
+    const auto* crest = find_crest(id);
+    if (!crest) return;
     auto& player = state_.players[seat];
     const auto end = player.crests.begin() + player.crest_count;
     if (std::any_of(player.crests.begin(), end, [id](const Crest& crest) { return crest.id == id; })) {
         return;
     }
-    if (player.crest_count == kCrestLimit) {
-        if (!rules_.replace_oldest_crest_when_full) {
+    if (player.crest_count + player.faith_count == kCrestLimit) {
+        if (!rules_.replace_oldest_crest_when_full || player.crest_count == 0) {
             return;
         }
         erase(player.crests, player.crest_count, 0);
     }
-    player.crests[player.crest_count++] = {state_.next_creation_order++, id, find_crest(id)->countdown};
+    player.crests[player.crest_count++] = {state_.next_creation_order++, id, crest->countdown};
+}
+
+void Resolver::reanimate(int seat, int limit) {
+    auto& player = state_.players[seat];
+    if (player.board_count >= kBoardLimit) return;
+    std::array<std::pair<CardId, int>, kCardSlots + kAdditionalCardCounters> candidates{};
+    int best = -1;
+    int count = 0;
+    int total = 0;
+    const auto consider = [&](CardId id, int destroyed) {
+        if (destroyed == 0) return;
+        const auto& card = definition(id);
+        if (card.cost > limit || card.cost < best) return;
+        if (card.cost > best) {
+            best = card.cost;
+            count = total = 0;
+        }
+        candidates[count++] = {id, destroyed};
+        total += destroyed;
+    };
+    for (int i = 0; i < kCardSlots; ++i) consider(static_cast<CardId>(kFirstCard + i), player.destroyed_followers[i]);
+    for (int i = 0; i < player.other_counter_count; ++i) {
+        consider(player.other_counters[i].id, player.other_counters[i].destroyed);
+    }
+    if (total == 0) return;
+    int pick = random_index(state_, total);
+    for (int i = 0; i < count; ++i) {
+        const auto [id, weight] = candidates[i];
+        if (pick < weight) {
+            enter(seat, id);
+            return;
+        }
+        pick -= weight;
+    }
 }
 
 void Resolver::effect(const Ability& ability, const Effect& step, EntityId random_target) {
@@ -540,6 +735,10 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
     case Target::ChosenEnemyPermanent:
         target = {enemy, ability.chosen};
         break;
+    case Target::ChosenOwnFollower:
+    case Target::ChosenOwnPermanent:
+        target = {owner, ability.chosen};
+        break;
     case Target::RandomEnemyFollower:
         target = {enemy, rules_.random_targets == RandomTargets::PerStep ? random_enemy(owner) : random_target};
         break;
@@ -548,24 +747,29 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
     case Target::EnemyLeader:
     case Target::AllEnemyFollowers:
     case Target::BothLeaders:
+    case Target::ChosenOwnHand:
         break;
     }
+    const int hand_slot = step.target == Target::ChosenOwnHand && (ability.chosen & kHandTargetFlag)
+        ? static_cast<int>(ability.chosen & ~kHandTargetFlag) : -1;
     using enum Operation;
     switch (step.operation) {
-    case Damage:
+    case Damage: {
+        const int amount = step.amount + step.spellboost_multiplier * ability.spellboost;
         if (step.target == Target::BothLeaders) {
-            damage_leader(owner, step.amount);
-            damage_leader(enemy, step.amount);
+            damage_leader(owner, amount);
+            damage_leader(enemy, amount);
         } else if (step.target == Target::EnemyLeader || step.target == Target::OwnLeader) {
-            damage_leader(step.target == Target::EnemyLeader ? enemy : owner, step.amount);
+            damage_leader(step.target == Target::EnemyLeader ? enemy : owner, amount);
         } else if (step.target == Target::AllEnemyFollowers) {
             for (int i = 0; i < opponent.board_count; ++i) {
-                damage({enemy, opponent.board[i].creation_order}, step.amount);
+                damage({enemy, opponent.board[i].creation_order}, amount);
             }
         } else {
-            damage(target, step.amount);
+            damage(target, amount);
         }
         break;
+    }
     case Heal:
         heal_leader(step.target == Target::OwnLeader ? owner : enemy, step.amount);
         break;
@@ -583,7 +787,8 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
         }
         break;
     case SummonModified:
-        enter(owner, step.card, step.amount, step.health_modifier, step.granted_abilities);
+        enter(owner, step.card, {step.granted_abilities, static_cast<std::int8_t>(step.amount),
+                                 static_cast<std::int8_t>(step.health_modifier), 0, 0, 0, 0});
         break;
     case SummonEvolved:
         evolve(enter(owner, step.card), Evolution::Normal, false);
@@ -625,6 +830,49 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
             }
         }
         break;
+    case ReturnToDeck:
+        if (hand_slot >= 0 && hand_slot < player.hand_count) {
+            return_to_deck(state_, player, player.hand[hand_slot], player.hand_modifiers[hand_slot]);
+            erase_hand(player, hand_slot);
+        } else if (const auto* object = find(state_, target)) {
+            auto& recipient = state_.players[target.seat];
+            return_to_deck(state_, recipient, printed_card(object->card_id), object->modifiers);
+            erase(recipient.board, recipient.board_count, static_cast<int>(object - recipient.board.data()));
+        }
+        break;
+    case Buff:
+        if (hand_slot >= 0 && hand_slot < player.hand_count) {
+            auto& modifiers = player.hand_modifiers[hand_slot];
+            modifiers.attack = static_cast<std::int8_t>(std::clamp(modifiers.attack + step.amount, -127, 127));
+            modifiers.defense = static_cast<std::int8_t>(std::clamp(modifiers.defense + step.health_modifier, -127, 127));
+            modifiers.abilities |= step.granted_abilities;
+        } else if (auto* object = find(state_, target); object && follower(*object)) {
+            auto& modifiers = object->modifiers;
+            modifiers.attack = static_cast<std::int8_t>(std::clamp(modifiers.attack + step.amount, -127, 127));
+            modifiers.defense = static_cast<std::int8_t>(std::clamp(modifiers.defense + step.health_modifier, -127, 127));
+            modifiers.abilities |= step.granted_abilities;
+            object->atk = static_cast<std::int16_t>(std::max(0, object->atk + step.amount));
+            object->hp = static_cast<std::int16_t>(object->hp + step.health_modifier);
+            object->max_hp = static_cast<std::int16_t>(object->max_hp + step.health_modifier);
+            object->abilities |= step.granted_abilities;
+        }
+        break;
+    case Copy:
+        if (hand_slot >= 0 && hand_slot < player.hand_count) {
+            add_card(player, player.hand[hand_slot], player.hand_modifiers[hand_slot]);
+        } else if (const auto* object = find(state_, target); object && can_enter(player, definition(object->card_id), rules_)) {
+            auto copy = *object;
+            const auto created = enter(owner, copy.card_id, copy.modifiers);
+            if (auto* added = find(state_, created)) {
+                copy.creation_order = created.order;
+                copy.entry_ply = static_cast<std::uint8_t>(ply(state_));
+                copy.readied = copy.attacked_this_turn = copy.attacked_twice = copy.acted_this_turn = false;
+                copy.earth_count = added->earth_count;
+                copy.clue_count = added->clue_count;
+                *added = copy;
+            }
+        }
+        break;
     case Destroy:
         destroy(target, source, true);
         break;
@@ -634,7 +882,12 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
             const auto hp = static_cast<std::int16_t>(form.hp);
             *object = {target.order, step.card, static_cast<std::int16_t>(form.atk), hp, hp, form.abilities,
                        static_cast<std::uint16_t>(form.clue), static_cast<std::uint8_t>(form.countdown),
-                       static_cast<std::uint8_t>(ply(state_)), Evolution::None, false, false, false, false};
+                       static_cast<std::uint8_t>(ply(state_)), Evolution::None, false, false, false, false,
+                       false, static_cast<std::uint16_t>(form.earth), {}};
+            if (form.kind == Kind::Follower && step.transformed_evolution != Evolution::None) {
+                // An evolved destination form does not trigger evolution abilities.
+                set_evolved_form(*object, step.transformed_evolution);
+            }
             if (rules_.reset_name_counts_on_transform) {
                 counts(state_.players[target.seat], form.id) = {};
             }
@@ -642,6 +895,50 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
         break;
     case RestorePp:
         player.pp = static_cast<std::uint8_t>(std::min(static_cast<int>(player.max_pp), player.pp + step.amount));
+        break;
+    case IncreaseMaxPp:
+        player.max_pp = static_cast<std::uint8_t>(std::clamp(player.max_pp + step.amount, 0, kMaxPp));
+        player.pp = std::min(player.pp, player.max_pp);
+        break;
+    case Necromancy:
+        player.shadows = static_cast<std::uint16_t>(player.shadows - step.amount);
+        break;
+    case AddEarth: {
+        int slot = earth_slot(player);
+        if (slot < 0 && step.amount > 0) {
+            const auto added = enter(owner, kEarthSigil);
+            if (added.order != 0) {
+                player.board[player.board_count - 1].earth_count = static_cast<std::uint16_t>(step.amount);
+            }
+        } else if (slot >= 0 && step.amount > 0) {
+            player.board[slot].earth_count = static_cast<std::uint16_t>(
+                std::min(65535, player.board[slot].earth_count + step.amount));
+        }
+        break;
+    }
+    case EarthRite: {
+        const int slot = earth_slot(player);
+        auto& sigil = player.board[slot];
+        sigil.earth_count = static_cast<std::uint16_t>(sigil.earth_count - step.amount);
+        if (sigil.earth_count == 0) destroy({owner, sigil.creation_order}, source, false);
+        break;
+    }
+    case Reanimate:
+        reanimate(owner, step.amount);
+        break;
+    case GrantFaith:
+        grant_faith(player, step.card);
+        break;
+    case Discard:
+        if (hand_slot >= 0 && hand_slot < player.hand_count) {
+            erase_hand(player, hand_slot);
+            ++player.shadows;
+        } else if (step.target == Target::None) {
+            for (int count = 0; count < step.amount && player.hand_count > 0; ++count) {
+                erase_hand(player, random_index(state_, player.hand_count));
+                ++player.shadows;
+            }
+        }
         break;
     case GrantCrest:
         grant_crest(owner, step.crest);
@@ -655,7 +952,18 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
             }
         }
         break;
-    case EvolveWithAlly:
+    case Custom:
+        custom_effect(step.handler, source, target);
+        break;
+    }
+}
+
+void Resolver::custom_effect(CardHandler handler, Ref source, Ref target) {
+    auto& player = state_.players[source.seat];
+    switch (handler) {
+    case CardHandler::None:
+        break;
+    case CardHandler::EvolveWithAlly:
         if (std::any_of(player.board.begin(), player.board.begin() + player.board_count,
                         [&](const Permanent& object) {
                             return object.creation_order != source.order && object.evolution != Evolution::None;
@@ -663,7 +971,7 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
             evolve(target, Evolution::Normal, false);
         }
         break;
-    case BanishLowestAndEvolve: {
+    case CardHandler::BanishLowestAndEvolve: {
         if (player.hand_count == 0) {
             if (rules_.rabbit_evolves_with_empty_hand) {
                 evolve(target, Evolution::Normal, false);
@@ -674,7 +982,7 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
         std::array<int, kHandLimit> candidates{};
         int count = 0;
         for (int i = 0; i < player.hand_count; ++i) {
-            const int cost = definition(player.hand[i]).cost;
+            const int cost = card_cost(definition(player.hand[i]), player.hand_modifiers[i]);
             if (cost < lowest) {
                 lowest = cost;
                 count = 0;
@@ -683,7 +991,7 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
                 candidates[count++] = i;
             }
         }
-        erase(player.hand, player.hand_count, candidates[random_index(state_, count)]);
+        erase_hand(player, candidates[random_index(state_, count)]);
         evolve(target, Evolution::Normal, false);
         break;
     }
@@ -694,27 +1002,50 @@ void Resolver::play(Action action) {
     const int seat = state_.turn_player;
     auto& player = state_.players[seat];
     const CardId card = player.hand[action.src];
-    const auto payment = play_cost(definition(card), player.available_pp());
-    const EntityId chosen = action.dst >= 0 ? state_.players[1 - seat].board[action.dst].creation_order : 0;
+    const auto modifiers = player.hand_modifiers[action.src];
+    const auto payment = play_cost(definition(card), player.available_pp(), modifiers);
+    const EntityId chosen = chosen_entity(state_, action, true);
     const int mode = payment.enhanced ? kEnhancedMode : action.choice;
     spend(player, payment.cost);
-    erase(player.hand, player.hand_count, action.src);
+    erase_hand(player, action.src);
     ++counts(player, card).play;
+    ++player.plays_this_turn;
     if (payment.form.kind == Kind::Spell) {
         ++player.shadows;
-        enqueue({OnPlay, Origin::Spell, {seat}, card, CrestId::None, chosen, mode});
+        for (int i = 0; i < player.hand_count; ++i) {
+            auto& boost = player.hand_modifiers[i].spellboost;
+            if (definition(player.hand[i]).spellboost && boost < 255) ++boost;
+        }
+        enqueue({OnPlay, Origin::Spell, {seat}, card, CrestId::None, chosen, mode,
+                 modifiers.spellboost, modifiers.fused_materials});
     } else {
-        const auto created = enter(seat, payment.form.id);
+        const auto created = enter(seat, payment.form.id, modifiers);
         board_ability(created, OnPlay, chosen, mode);
     }
     settle({seat});
     resolve();
 }
 
+void Resolver::fuse(Action action) {
+    const int seat = state_.turn_player;
+    auto& player = state_.players[seat];
+    const auto card = player.hand[action.src];
+    auto& source = player.hand_modifiers[action.src];
+    source.fused_ply = static_cast<std::uint8_t>(ply(state_));
+    source.fused_materials = static_cast<std::uint8_t>(std::min(255, source.fused_materials + std::popcount(action.choice)));
+    for (int i = player.hand_count - 1; i >= 0; --i) {
+        if (i != action.src && (action.choice & (1 << (i - (i > action.src))))) {
+            erase_hand(player, i);
+        }
+    }
+    enqueue({OnFuse, Origin::Spell, {seat}, card});
+    resolve();
+}
+
 void Resolver::manual_evolve(Action action) {
     const int seat = state_.turn_player;
     const auto ref = Ref{seat, state_.players[seat].board[action.src].creation_order};
-    const EntityId chosen = action.dst >= 0 ? state_.players[1 - seat].board[action.dst].creation_order : 0;
+    const EntityId chosen = chosen_entity(state_, action);
     evolve(ref, action.type == ActionType::SuperEvolve ? Evolution::Super : Evolution::Normal, true, chosen);
     settle(ref);
     resolve();
@@ -727,7 +1058,7 @@ void Resolver::act(Action action) {
     spend(player, definition(object.card_id).act_cost);
     ++counts(player, object.card_id).act;
     object.acted_this_turn = true;
-    board_ability({seat, object.creation_order}, OnAct);
+    board_ability({seat, object.creation_order}, OnAct, chosen_entity(state_, action));
     resolve();
 }
 
@@ -738,6 +1069,7 @@ void Resolver::attack(Action action) {
     auto& attacker = player.board[action.src];
     const Ref source{seat, attacker.creation_order};
     ++counts(player, attacker.card_id).attack;
+    attacker.attacked_twice = attacker.attacked_this_turn;
     attacker.attacked_this_turn = true;
     attacker.abilities &= ~kAmbush;
     const bool face = action.dst == kEnemyLeader;
@@ -822,14 +1154,17 @@ void Resolver::refresh(int seat) {
     player.pp = player.max_pp;
     player.bonus_pp = 0;
     player.manual_evolved = false;
+    player.plays_this_turn = 0;
     player.actions = {};
-    if (seat == 1 && state_.turn_number == 6 && player.extra_pp_uses == 1) {
+    for (int i = 0; i < player.other_counter_count; ++i) player.other_counters[i].actions = {};
+    if (seat == 1 && state_.turn_number == kExtraPpRefillTurn && player.extra_pp_uses == 1) {
         player.extra_pp_available = true;
     }
     for (int i = 0; i < player.board_count; ++i) {
         auto& object = player.board[i];
         object.readied = follower(object) && object.entry_ply != ply(state_);
         object.attacked_this_turn = false;
+        object.attacked_twice = false;
         object.acted_this_turn = false;
     }
 }
@@ -921,22 +1256,29 @@ void replace_opening_cards(GameState& state, int mask, const RuleConfig& rules) 
         }
     }
     if (corrections != 0) {
-        const auto end = std::move(player.deck.begin() + player.deck_idx, player.deck.end(),
+        const auto end = std::move(player.deck.begin() + player.deck_idx, player.deck.begin() + player.deck_end,
                                    player.deck.begin() + kOpeningHand);
         std::copy_n(returned.begin(), corrections, end);
         std::copy_n(player.hand.begin(), kOpeningHand, player.deck.begin());
         player.deck_idx = kOpeningHand;
         if (rules.mulligan_return == MulliganReturn::Shuffle) {
-            shuffle(state, player.deck, kOpeningHand);
+            shuffle(state, player, kOpeningHand);
         }
     }
 }
 
 void check_deck(const Deck& deck) {
-    std::array<int, kCardSlots> copies{};
-    for (CardId id : deck) {
-        if (!is_deck_card(id) || ++copies[id - kFirstCard] > 3) {
+    int faiths = 0;
+    std::array<int, kCardSlots> legacy_copies{};
+    for (auto item = deck.begin(); item != deck.end(); ++item) {
+        const auto id = *item;
+        if (!is_deck_card(id)) {
             throw std::invalid_argument("Deck uses a non-deck card or exceeds the three-copy limit");
+        }
+        const bool faith = definition(id).kind == Kind::Faith;
+        const auto copies = legacy_counter(id) ? ++legacy_copies[id - kFirstCard] : 1 + std::count(deck.begin(), item, id);
+        if (copies > (faith ? 1 : 3) || (faith && ++faiths > kCrestLimit)) {
+            throw std::invalid_argument("Deck exceeds the copy limit or leader area limit");
         }
     }
 }
@@ -950,21 +1292,26 @@ GameState new_game(const Deck& first, const Deck& second, std::uint64_t seed) {
     state.rng_state = seed;
     state.next_creation_order = 1;
     state.turn_number = 1;
-    state.players[0].deck = first;
-    state.players[1].deck = second;
     for (int seat = 0; seat < kPlayers; ++seat) {
         auto& player = state.players[seat];
+        for (const CardId id : seat == 0 ? first : second) {
+            if (definition(id).kind == Kind::Faith) {
+                grant_faith(player, id);
+            } else {
+                player.deck[player.deck_end++] = id;
+            }
+        }
         player.leader_hp = kLeaderMaxHp;
         player.ep = player.sep = 2;
         player.extra_pp_available = seat == 1;
-        shuffle(state, player.deck, 0);
+        shuffle(state, player, 0);
         draw(state, seat, kOpeningHand);
     }
     return state;
 }
 
 bool can_choose_enemy_permanent(const Permanent& object) {
-    return object.creation_order != 0 && object.clue_count == 0 && !has(object, kAura | kAmbush);
+    return object.creation_order != 0 && object.clue_count == 0 && object.earth_count == 0 && !has(object, kAura | kAmbush);
 }
 
 void resolve_effect_steps(GameState& state, int owner, std::span<const Effect> effects,
@@ -984,9 +1331,7 @@ ActionList legal_actions(const GameState& state, const RuleConfig& rules) {
         return actions;
     }
     const auto add = [&](ActionType type, int src = kNoTarget, int dst = kNoTarget, int choice = 0) {
-        assert(actions.count_ < kMaxActions);
-        actions.actions_[actions.count_++] =
-            {type, static_cast<std::int8_t>(src), static_cast<std::int8_t>(dst), static_cast<std::uint8_t>(choice)};
+        actions.push({type, static_cast<std::int8_t>(src), static_cast<std::int8_t>(dst), static_cast<std::uint8_t>(choice)});
     };
     if (state.phase == Phase::Mulligan) {
         for (int mask = 0; mask < (1 << kOpeningHand); ++mask) {
@@ -999,7 +1344,20 @@ ActionList legal_actions(const GameState& state, const RuleConfig& rules) {
     const auto& enemy = state.players[1 - seat];
     const auto add_targets = [&](ActionType type, int src, int mode, Target target, bool mandatory) {
         bool found = false;
-        if (target != Target::None) {
+        if (target == Target::ChosenOwnHand) {
+            for (int dst = 0; dst < player.hand_count; ++dst) {
+                if (type == ActionType::Play && src == dst) continue;
+                add(type, src, kOwnHandTarget + dst, mode);
+                found = true;
+            }
+        } else if (target == Target::ChosenOwnFollower || target == Target::ChosenOwnPermanent) {
+            for (int dst = 0; dst < player.board_count; ++dst) {
+                if (target == Target::ChosenOwnPermanent || follower(player.board[dst])) {
+                    add(type, src, kOwnBoardTarget + dst, mode);
+                    found = true;
+                }
+            }
+        } else if (target != Target::None) {
             for (int dst = 0; dst < enemy.board_count; ++dst) {
                 const auto& object = enemy.board[dst];
                 if (can_choose_enemy_permanent(object) &&
@@ -1020,9 +1378,19 @@ ActionList legal_actions(const GameState& state, const RuleConfig& rules) {
     }
     for (int src = 0; src < player.hand_count; ++src) {
         const auto& card = definition(player.hand[src]);
-        const auto cost = play_cost(card, player.available_pp());
+        const auto& modifiers = player.hand_modifiers[src];
+        if (card.fusion != FusionMaterial::None && modifiers.fused_ply != ply(state)) {
+            int mask = 0;
+            for (int material = 0; material < player.hand_count; ++material) {
+                if (material != src && fusion_matches(card, definition(player.hand[material]))) {
+                    mask |= 1 << (material - (material > src));
+                }
+            }
+            for (int subset = mask; subset != 0; subset = (subset - 1) & mask) add(ActionType::Fuse, src, kNoTarget, subset);
+        }
+        const auto cost = play_cost(card, player.available_pp(), modifiers);
         if (cost.cost > player.available_pp() || !can_enter(player, cost.form, rules) ||
-            player.actions[printed_card(card.id) - kFirstCard].play >= kNameActionLimit) {
+            used_actions(player, card.id).play >= kNameActionLimit) {
             continue;
         }
         const int first_mode = cost.form.modes > 0 ? 1 : 0;
@@ -1036,7 +1404,7 @@ ActionList legal_actions(const GameState& state, const RuleConfig& rules) {
     for (int src = 0; src < player.board_count; ++src) {
         const auto& object = player.board[src];
         const auto& card = definition(object.card_id);
-        const auto& named = player.actions[printed_card(object.card_id) - kFirstCard];
+        const auto named = used_actions(player, object.card_id);
         if (card.kind == Kind::Amulet) {
             if (!object.silenced && !object.acted_this_turn && named.act < kNameActionLimit && card.act_cost >= 0 &&
                 card.act_cost <= player.available_pp() && (rules.act_on_entry_turn || object.entry_ply != ply(state))) {
@@ -1055,8 +1423,7 @@ ActionList legal_actions(const GameState& state, const RuleConfig& rules) {
                 add_targets(ActionType::SuperEvolve, src, 0, super_target, false);
             }
         }
-        if (object.attacked_this_turn || named.attack >= kNameActionLimit || has(object, kAttackBlocked) ||
-            (!object.readied && !has(object, FLAG_RUSH | FLAG_STORM))) {
+        if (!attack_ready(object) || named.attack >= kNameActionLimit) {
             continue;
         }
         for (int dst = 0; dst < enemy.board_count; ++dst) {
@@ -1115,6 +1482,9 @@ void apply_legal_action(GameState& state, Action action, const RuleConfig& rules
             state.phase = Phase::Main;
             resolver.start_turn();
         }
+        break;
+    case ActionType::Fuse:
+        resolver.fuse(action);
         break;
     }
 }

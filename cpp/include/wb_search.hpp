@@ -5,7 +5,21 @@
 
 namespace svwb::wb {
 
-[[nodiscard]] Features extract_features(const GameState& state);
+class MatchupFeatures {
+public:
+    MatchupFeatures() = default;
+    MatchupFeatures(const Deck& first, const Deck& second);
+    [[nodiscard]] int local_id(CardId id) const;
+    [[nodiscard]] std::span<const CardId> cards() const { return cards_; }
+    [[nodiscard]] bool legacy_mirror() const { return legacy_; }
+
+private:
+    std::vector<CardId> cards_;
+    std::vector<int> by_card_;
+    bool legacy_ = true;
+};
+
+[[nodiscard]] Features extract_features(const GameState& state, const MatchupFeatures* matchup = nullptr);
 
 struct RankedTurn {
     std::vector<Action> actions;
@@ -23,7 +37,8 @@ struct Decision {
 
 class Search {
 public:
-    Search(const Mlp& first, const Mlp& second, std::mt19937& rng, SearchOptions options);
+    Search(const Mlp& first, const Mlp& second, std::mt19937& rng, SearchOptions options,
+           const MatchupFeatures* matchup = nullptr);
     ~Search();
     [[nodiscard]] Decision choose(const GameState& state, bool policy);
 
@@ -35,11 +50,13 @@ private:
     std::array<const Mlp*, kPlayers> models_;
     std::mt19937& rng_;
     SearchOptions options_;
+    const MatchupFeatures* matchup_;
     std::unique_ptr<Node> root_;
 };
 
 // Evaluate each mask over common sampled replacement decks, without inspecting the actual next cards.
-[[nodiscard]] Action choose_mulligan(const GameState& state, const Mlp& model, std::mt19937& rng);
+[[nodiscard]] Action choose_mulligan(const GameState& state, const Mlp& model, std::mt19937& rng,
+                                     const MatchupFeatures* matchup = nullptr);
 [[nodiscard]] float outcome_value(Outcome outcome, int seat);
 
 } // namespace svwb::wb

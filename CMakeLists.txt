@@ -20,13 +20,25 @@ endif()
 svwb_enable_warnings(svwb_engine)
 
 find_package(Threads REQUIRED)
+find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
 add_library(svwb_search STATIC cpp/src/mlp.cpp cpp/src/search.cpp cpp/src/analysis.cpp)
 target_link_libraries(svwb_search PUBLIC svwb_engine)
 set_target_properties(svwb_search PROPERTIES CXX_EXTENSIONS OFF)
 svwb_enable_warnings(svwb_search)
 
-add_library(svwb_rules STATIC cpp/src/wb_cards.cpp cpp/src/wb_rules.cpp)
+set(SVWB_CARD_DATA "${CMAKE_CURRENT_SOURCE_DIR}/data/cards")
+set(SVWB_GENERATED_CARDS "${CMAKE_CURRENT_BINARY_DIR}/generated/wb_card_data.inc")
+add_custom_command(OUTPUT "${SVWB_GENERATED_CARDS}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/python/generate_cards.py"
+            --data "${SVWB_CARD_DATA}" --output "${SVWB_GENERATED_CARDS}"
+    DEPENDS python/generate_cards.py
+            data/cards/svwb_rotation_ja.json data/cards/svwb_missing_tokens.json
+            data/cards/svwb_crests.json data/cards/svwb_special_forms.json
+            data/cards/svwb_supplements_manifest.json data/cards/engine_cards.json
+    VERBATIM)
+add_library(svwb_rules STATIC cpp/src/wb_cards.cpp cpp/src/wb_rules.cpp "${SVWB_GENERATED_CARDS}")
 target_include_directories(svwb_rules PUBLIC cpp/include)
+target_include_directories(svwb_rules PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_features(svwb_rules PUBLIC cxx_std_20)
 set_target_properties(svwb_rules PROPERTIES CXX_EXTENSIONS OFF)
 if(MSVC)
@@ -34,10 +46,20 @@ if(MSVC)
 endif()
 svwb_enable_warnings(svwb_rules)
 
-add_executable(svwb_ai cpp/src/main.cpp cpp/src/wb_match.cpp cpp/src/wb_search.cpp)
-target_link_libraries(svwb_ai PRIVATE svwb_search svwb_rules Threads::Threads)
+add_library(svwb_wb_search STATIC cpp/src/wb_search.cpp)
+target_link_libraries(svwb_wb_search PUBLIC svwb_search svwb_rules)
+set_target_properties(svwb_wb_search PROPERTIES CXX_EXTENSIONS OFF)
+svwb_enable_warnings(svwb_wb_search)
+
+add_executable(svwb_ai cpp/src/main.cpp cpp/src/wb_match.cpp)
+target_link_libraries(svwb_ai PRIVATE svwb_wb_search Threads::Threads)
 set_target_properties(svwb_ai PROPERTIES CXX_EXTENSIONS OFF)
 svwb_enable_warnings(svwb_ai)
+
+add_executable(svwb_play_cli cpp/src/play_cli.cpp)
+target_link_libraries(svwb_play_cli PRIVATE svwb_wb_search)
+set_target_properties(svwb_play_cli PROPERTIES CXX_EXTENSIONS OFF)
+svwb_enable_warnings(svwb_play_cli)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -65,7 +87,6 @@ if(BUILD_TESTING)
     add_test(NAME wb_mirror_random_10000 COMMAND test_wb --stress)
     set_tests_properties(wb_mirror_random_10000 PROPERTIES TIMEOUT 60)
 
-    find_package(Python3 3.11 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
         add_test(NAME selfplay_binary_logs COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/cpp/tests/check_logs.py"
@@ -77,5 +98,8 @@ if(BUILD_TESTING)
         add_test(NAME wb_training_exports COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/cpp/tests/check_wb_match.py" "$<TARGET_FILE:svwb_ai>")
         set_tests_properties(wb_training_exports PROPERTIES TIMEOUT 60)
+        add_test(NAME wb_play_json_lines COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cpp/tests/check_play_cli.py" "$<TARGET_FILE:svwb_play_cli>")
+        set_tests_properties(wb_play_json_lines PROPERTIES TIMEOUT 60)
     endif()
 endif()

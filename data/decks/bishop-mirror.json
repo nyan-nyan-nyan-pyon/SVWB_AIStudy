@@ -1,0 +1,65 @@
+{
+  "name": "Bishop Mirror",
+  "cards": [
+    {
+      "card_id": 10062210,
+      "copies": 3
+    },
+    {
+      "card_id": 10861110,
+      "copies": 3
+    },
+    {
+      "card_id": 11001110,
+      "copies": 3
+    },
+    {
+      "card_id": 11061110,
+      "copies": 2
+    },
+    {
+      "card_id": 10863110,
+      "copies": 2
+    },
+    {
+      "card_id": 10962120,
+      "copies": 3
+    },
+    {
+      "card_id": 11002110,
+      "copies": 2
+    },
+    {
+      "card_id": 11062110,
+      "copies": 3
+    },
+    {
+      "card_id": 11063310,
+      "copies": 3
+    },
+    {
+      "card_id": 10061210,
+      "copies": 2
+    },
+    {
+      "card_id": 10864120,
+      "copies": 3
+    },
+    {
+      "card_id": 11062310,
+      "copies": 3
+    },
+    {
+      "card_id": 11064110,
+      "copies": 3
+    },
+    {
+      "card_id": 10861120,
+      "copies": 2
+    },
+    {
+      "card_id": 11063110,
+      "copies": 3
+    }
+  ]
+}

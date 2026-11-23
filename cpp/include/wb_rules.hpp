@@ -2,6 +2,7 @@
 
 #include "state.hpp"
 
+#include <vector>
 namespace svwb::wb {
 
 inline constexpr int kCrestLimit = 5;
@@ -10,7 +11,12 @@ inline constexpr int kNameActionLimit = 20;
 inline constexpr CardId kFirstCard = 101;
 inline constexpr CardId kLastForm = 121;
 inline constexpr int kCardSlots = kLastForm - kFirstCard + 1;
+inline constexpr int kDeckCapacity = 80;
+inline constexpr int kAdditionalCardCounters = 64;
 using EntityId = std::uint32_t;
+inline constexpr int kOwnBoardTarget = kBoardLimit;
+inline constexpr int kOwnHandTarget = 2 * kBoardLimit;
+inline constexpr EntityId kHandTargetFlag = EntityId{1} << 31;
 
 enum class MulliganReturn : std::uint8_t { Shuffle, Bottom };
 enum class CrestClock : std::uint8_t { Printed, Start, End };
@@ -24,7 +30,7 @@ struct RuleConfig {
     MulliganReturn mulligan_return = MulliganReturn::Shuffle;              // U01
     bool refresh_before_start_effects = true;                              // U02
     CrestClock crest_clock = CrestClock::Printed;                           // U03
-    SimultaneousLethal simultaneous_lethal = SimultaneousLethal::SourceOpponent; // U04
+    SimultaneousLethal simultaneous_lethal = SimultaneousLethal::NonActive; // U04
     bool turn_limit_after_end_effects = true;                              // U04
     bool super_damage_per_follower = true;                                 // U05
     bool zero_damage_consumes_barrier = true;                             // U06
@@ -56,6 +62,19 @@ inline constexpr std::uint16_t kAmbush = 1 << 10;
 inline constexpr std::uint16_t kIntimidate = 1 << 11;
 inline constexpr std::uint16_t kAttackBlocked = 1 << 12;
 inline constexpr std::uint16_t kDrain = 1 << 13;
+inline constexpr std::uint16_t kDoubleStrike = 1 << 14;
+
+struct CardModifiers {
+    std::uint16_t abilities;
+    std::int8_t attack;
+    std::int8_t defense;
+    std::int8_t cost;
+    std::uint8_t spellboost;
+    std::uint8_t fused_ply;
+    std::uint8_t fused_materials;
+
+    bool operator==(const CardModifiers&) const = default;
+};
 
 struct Permanent {
     EntityId creation_order;
@@ -72,6 +91,9 @@ struct Permanent {
     bool readied;
     bool attacked_this_turn;
     bool acted_this_turn;
+    bool attacked_twice;
+    std::uint16_t earth_count;
+    CardModifiers modifiers;
 
     bool operator==(const Permanent&) const = default;
 };
@@ -92,19 +114,36 @@ struct NamedActions {
     bool operator==(const NamedActions&) const = default;
 };
 
+struct CardCounters {
+    CardId id;
+    std::uint16_t destroyed;
+    NamedActions actions;
+
+    bool operator==(const CardCounters&) const = default;
+};
+
 struct PlayerState {
-    Deck deck;
+    std::array<CardId, kDeckCapacity> deck;
+    std::array<CardModifiers, kDeckCapacity> deck_modifiers;
     std::array<CardId, kHandLimit> hand;
+    std::array<CardModifiers, kHandLimit> hand_modifiers;
     std::array<Permanent, kBoardLimit> board;
     std::array<Crest, kCrestLimit> crests;
+    std::array<CardId, kCrestLimit> faiths;
     std::array<NamedActions, kCardSlots> actions;
     std::array<std::uint16_t, kCardSlots> destroyed_followers; // By printed card; independent of shadows.
+    std::array<CardCounters, kAdditionalCardCounters> other_counters;
     std::uint16_t shadows;
+    std::uint16_t followers_entered;
+    std::uint16_t plays_this_turn;
     std::int16_t leader_hp;
     std::uint8_t deck_idx;
+    std::uint8_t deck_end;
     std::uint8_t hand_count;
     std::uint8_t board_count;
     std::uint8_t crest_count;
+    std::uint8_t faith_count;
+    std::uint8_t other_counter_count;
     std::uint8_t pp; // Unspent regular PP; bonus_pp is temporary.
     std::uint8_t max_pp;
     std::uint8_t bonus_pp;
@@ -117,6 +156,7 @@ struct PlayerState {
 
     [[nodiscard]] int available_pp() const { return pp + bonus_pp; }
     [[nodiscard]] bool overflow() const { return max_pp >= 7; }
+    [[nodiscard]] int deck_remaining() const { return deck_end - deck_idx; }
     bool operator==(const PlayerState&) const = default;
 };
 
@@ -133,30 +173,40 @@ struct GameState {
     bool operator==(const GameState&) const = default;
 };
 
-enum class ActionType : std::uint8_t { EndTurn, Play, Evolve, SuperEvolve, Attack, Act, ExtraPp, Mulligan };
+enum class ActionType : std::uint8_t { EndTurn, Play, Evolve, SuperEvolve, Attack, Act, ExtraPp, Mulligan, Fuse };
 struct Action {
     ActionType type = ActionType::EndTurn;
     std::int8_t src = kNoTarget;
     std::int8_t dst = kNoTarget;
-    std::uint8_t choice = 0; // One-based mode or four-bit mulligan mask.
+    std::uint8_t choice = 0; // One-based mode or a mulligan/fusion mask. Fusion skips the source slot.
 
     bool operator==(const Action&) const = default;
 };
 
-inline constexpr int kMaxActions =
-    2 + 3 * kHandLimit * (kBoardLimit + 1) + kBoardLimit * (2 * kBoardLimit + kBoardLimit + 4);
+inline constexpr int kInlineActions = 2 + 3 * kHandLimit * (kBoardLimit + 1) +
+    kBoardLimit * (3 * kBoardLimit + 4);
 
 class ActionList {
 public:
-    [[nodiscard]] const Action* begin() const { return actions_.data(); }
+    [[nodiscard]] const Action* begin() const { return extended_.empty() ? actions_.data() : extended_.data(); }
     [[nodiscard]] const Action* end() const { return begin() + count_; }
     [[nodiscard]] int size() const { return count_; }
     [[nodiscard]] bool empty() const { return count_ == 0; }
-    [[nodiscard]] Action operator[](int index) const { return actions_[index]; }
+    [[nodiscard]] Action operator[](int index) const { return begin()[index]; }
 
 private:
     friend ActionList legal_actions(const GameState&, const RuleConfig&);
-    std::array<Action, kMaxActions> actions_;
+    void push(Action action) {
+        if (count_ < kInlineActions) {
+            actions_[count_] = action;
+        } else {
+            if (extended_.empty()) extended_.assign(actions_.begin(), actions_.end());
+            extended_.push_back(action);
+        }
+        ++count_;
+    }
+    std::array<Action, kInlineActions> actions_;
+    std::vector<Action> extended_;
     int count_ = 0;
 };
 
@@ -166,7 +216,14 @@ private:
 // The caller must already know that the action is legal for this position and rule configuration.
 void apply_legal_action(GameState& state, Action action, const RuleConfig& rules = {});
 [[nodiscard]] bool can_choose_enemy_permanent(const Permanent& object);
+[[nodiscard]] inline bool attack_ready(const Permanent& object) {
+    const bool twice = (object.abilities & kDoubleStrike) != 0;
+    return !object.attacked_twice && (!object.attacked_this_turn || twice) &&
+        (object.abilities & kAttackBlocked) == 0 &&
+        (object.readied || (object.abilities & (FLAG_RUSH | FLAG_STORM)) != 0);
+}
 
 static_assert(std::is_trivial_v<GameState> && std::is_standard_layout_v<GameState>);
+static_assert(sizeof(GameState) <= 4096);
 
 } // namespace svwb::wb

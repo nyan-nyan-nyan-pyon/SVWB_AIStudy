@@ -59,10 +59,16 @@ struct Cohorts {
 
 class OpeningTable {
 public:
+    explicit OpeningTable(const Deck& deck) : cards_(deck.begin(), deck.end()) {
+        std::sort(cards_.begin(), cards_.end());
+        cards_.erase(std::unique(cards_.begin(), cards_.end()), cards_.end());
+        for (auto& row : rows_) row.resize(cards_.size());
+    }
+
     void observe(const Opening& opening, int seat, Outcome outcome) {
         for (const int group : {seat, kPlayers}) {
-            for (std::size_t i = 0; i < kMirrorCardIds.size(); ++i) {
-                const auto id = kMirrorCardIds[i];
+            for (std::size_t i = 0; i < cards_.size(); ++i) {
+                const auto id = cards_[i];
                 auto& cell = rows_[group][i];
                 cell.kept[contains(opening.kept, id)].observe(outcome, seat);
                 cell.present[contains(opening.final, id)].observe(outcome, seat);
@@ -79,8 +85,8 @@ public:
         constexpr std::array<std::string_view, 3> labels{"first", "second", "combined"};
         out << std::fixed << std::setprecision(8);
         for (std::size_t group = 0; group < rows_.size(); ++group) {
-            for (std::size_t i = 0; i < kMirrorCardIds.size(); ++i) {
-                const auto id = kMirrorCardIds[i];
+            for (std::size_t i = 0; i < cards_.size(); ++i) {
+                const auto id = cards_[i];
                 const auto& card = *find_card(id);
                 out << labels[group] << ',' << id << ',';
                 if (card.official_id) {
@@ -121,7 +127,8 @@ private:
         }
     }
 
-    std::array<std::array<Cohorts, kDeckCardKinds>, kPlayers + 1> rows_{};
+    std::vector<CardId> cards_;
+    std::array<std::vector<Cohorts>, kPlayers + 1> rows_{};
 };
 
 void json_string(std::ostream& out, std::string_view name) {
@@ -159,8 +166,8 @@ void cards_json(std::ostream& out, const Hand& hand) {
 }
 
 std::string_view type_name(ActionType type) {
-    constexpr std::array<std::string_view, 8> names{
-        "end_turn", "play_card", "evolve", "super_evolve", "attack", "act", "extra_pp", "mulligan",
+    constexpr std::array<std::string_view, 9> names{
+        "end_turn", "play_card", "evolve", "super_evolve", "attack", "act", "extra_pp", "mulligan", "fuse",
     };
     return names[static_cast<std::size_t>(type)];
 }
@@ -178,12 +185,12 @@ GameState actions_json(std::ostream& out, const GameState& initial, std::span<co
         out << (comma ? ", {" : "{") << "\"type\":";
         json_string(out, type_name(action.type));
         if (action.src >= 0) {
-            const bool play = action.type == ActionType::Play;
-            out << ",\"source\":{\"zone\":\"" << (play ? "hand" : "board") << "\",\"slot\":"
+            const bool hand = action.type == ActionType::Play || action.type == ActionType::Fuse;
+            out << ",\"source\":{\"zone\":\"" << (hand ? "hand" : "board") << "\",\"slot\":"
                 << action.src + 1 << ',';
-            card_fields(out, play ? player.hand[action.src] : player.board[action.src].card_id);
-            if (play && state.players[before.turn_player].board_count > 0 &&
-                player.hand[action.src] == kAlmiraj && player.available_pp() < 3) {
+            card_fields(out, hand ? player.hand[action.src] : player.board[action.src].card_id);
+            if (action.type == ActionType::Play && find_card(player.hand[action.src])->crystal_form &&
+                player.available_pp() < card_cost(*find_card(player.hand[action.src]), player.hand_modifiers[action.src])) {
                 out << ",\"form\":\"crystal\"";
             }
             out << '}';
@@ -195,9 +202,12 @@ GameState actions_json(std::ostream& out, const GameState& initial, std::span<co
         if (action.dst == kEnemyLeader) {
             out << ",\"target\":{\"kind\":\"leader\",\"seat\":" << 1 + enemy << '}';
         } else if (action.dst >= 0) {
-            out << ",\"target\":{\"kind\":\"follower\",\"seat\":" << 1 + enemy
-                << ",\"slot\":" << action.dst + 1 << ',';
-            card_fields(out, before.players[enemy].board[action.dst].card_id);
+            const bool hand = action.dst >= kOwnHandTarget;
+            const bool own = action.dst >= kOwnBoardTarget;
+            const int slot = action.dst - (hand ? kOwnHandTarget : own ? kOwnBoardTarget : 0);
+            out << ",\"target\":{\"kind\":\"" << (hand ? "hand" : "follower") << "\",\"seat\":"
+                << 1 + (own ? before.turn_player : enemy) << ",\"slot\":" << slot + 1 << ',';
+            card_fields(out, hand ? player.hand[slot] : before.players[own ? before.turn_player : enemy].board[slot].card_id);
             out << '}';
         }
         out << '}';
@@ -264,18 +274,20 @@ void start_trace(std::ostream& out, const Game& game, std::uint64_t id, const Ma
     out << "  ],\n  \"turns\":[\n";
 }
 
-Game play(const MatchOptions& options, const Mlp& a, const Mlp& b, std::uint64_t id, bool trace) {
+Game play(const MatchOptions& options, const MatchupFeatures& matchup, const Mlp& a, const Mlp& b,
+          std::uint64_t id, bool trace) {
     const auto start = Clock::now();
     const int a_seat = static_cast<int>(id % 2);
     std::seed_seq seed{options.seed, static_cast<std::uint32_t>(id), static_cast<std::uint32_t>(id >> 32)};
     std::mt19937 rng(seed);
     const auto high = static_cast<std::uint64_t>(rng()) << 32;
     const auto deck_seed = high | rng();
-    auto state = new_game(kMirrorDeck, kMirrorDeck, deck_seed);
+    auto state = a_seat == 0 ? new_game(options.deck_a, options.deck_b, deck_seed)
+                            : new_game(options.deck_b, options.deck_a, deck_seed);
     const std::array<const Mlp*, kPlayers> models{a_seat == 0 ? &a : &b, a_seat == 0 ? &b : &a};
     auto search_options = options.search;
     search_options.record_actions = trace;
-    Search search(*models[0], *models[1], rng, search_options);
+    Search search(*models[0], *models[1], rng, search_options, &matchup);
     Game game;
     for (int seat = 0; seat < kPlayers; ++seat) {
         auto& opening = game.opening[seat];
@@ -283,7 +295,7 @@ Game play(const MatchOptions& options, const Mlp& a, const Mlp& b, std::uint64_t
         const auto action = options.random_opponent && seat != a_seat
             ? Action{ActionType::Mulligan, kNoTarget, kNoTarget,
                      static_cast<std::uint8_t>(std::uniform_int_distribution<int>(0, (1 << kOpeningHand) - 1)(rng))}
-            : choose_mulligan(state, *models[seat], rng);
+            : choose_mulligan(state, *models[seat], rng, &matchup);
         opening.mask = action.choice;
         for (int i = 0; i < kOpeningHand; ++i) {
             if (!(action.choice & (1 << i))) {
@@ -326,7 +338,7 @@ Game play(const MatchOptions& options, const Mlp& a, const Mlp& b, std::uint64_t
             }
         } else {
             if (logging) {
-                game.log.values.push_back({extract_features(state), 0});
+                game.log.values.push_back({extract_features(state, &matchup), 0});
                 value_seats.push_back(state.turn_player);
             }
             const auto decision = search.choose(state, logging);
@@ -392,6 +404,8 @@ std::ofstream output_file(const std::filesystem::path& path) {
 } // namespace
 
 void run_match(const MatchOptions& options) {
+    const MatchupFeatures matchup(options.deck_a, options.deck_b);
+    static_cast<void>(new_game(options.deck_a, options.deck_b, options.seed));
     const auto a = options.weights.empty() ? Mlp::random(options.seed) : Mlp::load(options.weights);
     const auto b = !options.opponent_weights.empty() ? Mlp::load(options.opponent_weights)
                  : options.opponent_seed ? Mlp::random(*options.opponent_seed) : a;
@@ -400,7 +414,7 @@ void run_match(const MatchOptions& options) {
         logs.emplace(options.log_dir);
     }
     const bool analyzing = !options.analysis_dir.empty();
-    OpeningTable table;
+    OpeningTable table(options.deck_a);
     std::array<std::optional<std::uint64_t>, kPlayers> representatives;
     std::optional<Outcome> explicit_game;
     Totals totals;
@@ -417,7 +431,7 @@ void run_match(const MatchOptions& options) {
                 if (options.games && id >= options.games) {
                     break;
                 }
-                const auto game = play(options, a, b, id, false);
+                const auto game = play(options, matchup, a, b, id, false);
                 const auto a_seat = static_cast<int>(id % 2);
                 const std::scoped_lock lock(mutex);
                 if (logs) {
@@ -462,6 +476,17 @@ void run_match(const MatchOptions& options) {
     }
     if (logs) {
         logs->finish();
+        if (!matchup.legacy_mirror()) {
+            auto out = output_file(options.log_dir / "matchup_features.json");
+            out << "{\"schema\":\"wb-matchup-v1\",\"input_dim\":256,\"cards\":[";
+            bool comma = false;
+            for (const auto card : matchup.cards()) {
+                out << (comma ? "," : "") << "{\"local_id\":" << matchup.local_id(card)
+                    << ",\"official_id\":" << find_card(card)->official_id << ",\"card_id\":" << card << '}';
+                comma = true;
+            }
+            out << "]}\n";
+        }
     }
     const double elapsed = std::chrono::duration<double>(Clock::now() - start).count();
     if (analyzing) {
@@ -470,7 +495,7 @@ void run_match(const MatchOptions& options) {
         table.write(csv);
         csv.close();
         const auto trace = [&](std::uint64_t id, Outcome expected, std::string_view name) {
-            const auto game = play(options, a, b, id, true);
+            const auto game = play(options, matchup, a, b, id, true);
             if (game.outcome != expected) {
                 throw std::logic_error("Replayed trace winner differs from the match result");
             }
@@ -495,7 +520,9 @@ void run_match(const MatchOptions& options) {
     const double games = static_cast<double>(totals.games);
     std::cout << "games=" << totals.games << " threads=" << threads << " turns=" << totals.turns
               << " seed=" << options.seed << " simulations=" << options.search.simulations
-              << " mode=" << (options.evaluate ? "evaluate" : "selfplay") << " rules=wb\n"
+              << " mode=" << (options.evaluate ? "evaluate" : "selfplay") << " rules=wb"
+              << " feature_schema=" << (matchup.legacy_mirror() ? "wb-mirror-v1" : "wb-matchup-v1")
+              << " local_cards=" << matchup.cards().size() << '\n'
               << "A_first=" << totals.a_first << " A_second=" << totals.games - totals.a_first
               << " A_wins=" << totals.a_wins << " B_wins=" << totals.b_wins << " draws=" << totals.both_lose
               << " first_wins=" << totals.first_wins << " second_wins=" << totals.second_wins

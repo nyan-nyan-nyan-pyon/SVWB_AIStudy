@@ -35,6 +35,8 @@ struct Options {
     std::optional<std::uint32_t> opponent_seed;
     const Deck* deck_a = &kDeckA;
     const Deck* deck_b = &kDeckB;
+    std::filesystem::path deck_a_file;
+    std::filesystem::path deck_b_file;
     std::filesystem::path weights;
     std::filesystem::path opponent_weights;
     std::filesystem::path log_dir;
@@ -49,7 +51,7 @@ struct Options {
 
 void usage(std::ostream& out) {
     out << "Usage: svwb_ai [--games N] [--seconds N] [--threads N] [--seed N]\n"
-           "               [--deck-a A|B] [--deck-b A|B] [--weights FILE]\n"
+           "               [--deck-a A|B|JSON] [--deck-b A|B|JSON] [--weights FILE]\n"
            "               [--opponent-weights FILE | --opponent-seed N]\n"
            "               [--simulations N] [--no-exploration] [--log-dir DIR]\n"
            "               [--evaluate [--random-opponent]]\n"
@@ -59,7 +61,7 @@ void usage(std::ostream& out) {
            "samples uniformly from all legal actions, including end turn.\n"
            "Starts at most N games, or stops starting games after N seconds, whichever comes first.\n"
            "Games in progress finish. Seats alternate between the two competitors.\n"
-           "--rules wb uses the fixed 40-card mirror. Its analysis records one win per seat by default.\n"
+           "--rules wb defaults to the fixed 40-card mirror. Deck JSON selects WB rules.\n"
            "Analysis writes opening_win_rates.csv and JSON traces (top 5 by default).\n"
            "Without a game or time limit, runs one game. Without weights, uses seeded random weights.\n";
 }
@@ -85,8 +87,13 @@ const Deck* deck(std::string_view value) {
     throw std::invalid_argument("Deck must be A or B");
 }
 
+std::filesystem::path utf8_path(std::string_view value) {
+    return std::filesystem::path(std::u8string(value.begin(), value.end()));
+}
+
 Options parse_options(int argc, char** argv) {
     Options options;
+    bool explicit_rules = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view flag(argv[i]);
         if (flag == "--no-exploration") {
@@ -119,17 +126,19 @@ Options parse_options(int argc, char** argv) {
         } else if (flag == "--simulations") {
             options.search.simulations = number(value, flag, 1, 100'000);
         } else if (flag == "--deck-a") {
-            options.deck_a = deck(value);
+            if (value == "A" || value == "B") options.deck_a = deck(value);
+            else options.deck_a_file = utf8_path(value);
         } else if (flag == "--deck-b") {
-            options.deck_b = deck(value);
+            if (value == "A" || value == "B") options.deck_b = deck(value);
+            else options.deck_b_file = utf8_path(value);
         } else if (flag == "--weights") {
-            options.weights = value;
+            options.weights = utf8_path(value);
         } else if (flag == "--opponent-weights") {
-            options.opponent_weights = value;
+            options.opponent_weights = utf8_path(value);
         } else if (flag == "--log-dir") {
-            options.log_dir = value;
+            options.log_dir = utf8_path(value);
         } else if (flag == "--analysis-dir") {
-            options.analysis_dir = value;
+            options.analysis_dir = utf8_path(value);
         } else if (flag == "--trace-game") {
             options.trace_game = number<std::uint64_t>(value, flag, 1);
         } else if (flag == "--trace-top") {
@@ -138,10 +147,15 @@ Options parse_options(int argc, char** argv) {
             if (value != "legacy" && value != "wb") {
                 throw std::invalid_argument("--rules must be legacy or wb");
             }
+            explicit_rules = true;
             options.wb_rules = value == "wb";
         } else {
             throw std::invalid_argument("Unknown option " + std::string(flag));
         }
+    }
+    if (!options.deck_a_file.empty() || !options.deck_b_file.empty()) {
+        if (explicit_rules && !options.wb_rules) throw std::invalid_argument("Deck JSON requires WB rules");
+        options.wb_rules = true;
     }
     if (options.opponent_seed && !options.opponent_weights.empty()) {
         throw std::invalid_argument("--opponent-seed and --opponent-weights are mutually exclusive");
@@ -378,7 +392,7 @@ void run(const Options& options) {
 
 } // namespace
 
-int main(int argc, char** argv) {
+int run_application(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--help") {
         usage(std::cout);
         return 0;
@@ -389,7 +403,9 @@ int main(int argc, char** argv) {
             svwb::wb::run_match({options.games, options.seconds, options.threads, options.seed,
                 options.opponent_seed, options.weights, options.opponent_weights, options.log_dir,
                 options.analysis_dir, options.trace_game, options.trace_top.value_or(5),
-                options.evaluate, options.random_opponent, options.search});
+                options.evaluate, options.random_opponent, options.search,
+                options.deck_a_file.empty() ? svwb::wb::kMirrorDeck : svwb::wb::read_deck(options.deck_a_file),
+                options.deck_b_file.empty() ? svwb::wb::kMirrorDeck : svwb::wb::read_deck(options.deck_b_file)});
         } else {
             run(options);
         }
@@ -399,3 +415,20 @@ int main(int argc, char** argv) {
     }
     return 0;
 }
+
+#ifdef _WIN32
+int wmain(int argc, wchar_t** argv) {
+    std::vector<std::string> arguments;
+    for (int i = 0; i < argc; ++i) {
+        const auto utf8 = std::filesystem::path(argv[i]).u8string();
+        arguments.emplace_back(utf8.begin(), utf8.end());
+    }
+    std::vector<char*> pointers;
+    for (auto& argument : arguments) pointers.push_back(argument.data());
+    return run_application(argc, pointers.data());
+}
+#else
+int main(int argc, char** argv) {
+    return run_application(argc, argv);
+}
+#endif

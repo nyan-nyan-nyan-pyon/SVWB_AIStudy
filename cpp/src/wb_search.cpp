@@ -18,13 +18,14 @@ constexpr int kCrestZone = kDeckZone + kDeckCardKinds;
 constexpr int kNextDraws = kCrestZone + 3;
 static_assert(kNextDraws + 2 <= kPlayerFeatures);
 
-bool ready(const Permanent& object) {
-    return !object.attacked_this_turn && !(object.abilities & kAttackBlocked) &&
-        (object.readied || (object.abilities & (FLAG_RUSH | FLAG_STORM)));
+float local_feature(CardId id, const MatchupFeatures& matchup) {
+    return static_cast<float>(matchup.local_id(id) + 1) /
+        static_cast<float>(std::max<std::size_t>(1, matchup.cards().size()));
 }
 
-void encode_player(float* out, const GameState& state, int seat) {
+void encode_player(float* out, const GameState& state, int seat, const MatchupFeatures* matchup) {
     const auto& p = state.players[seat];
+    const bool legacy = !matchup || matchup->legacy_mirror();
     out[0] = std::max(0, static_cast<int>(p.leader_hp)) / 20.0F;
     out[1] = p.available_pp() / 11.0F;
     out[2] = p.max_pp / 10.0F;
@@ -32,7 +33,7 @@ void encode_player(float* out, const GameState& state, int seat) {
     out[4] = std::min(64, static_cast<int>(p.shadows)) / 64.0F;
     out[5] = p.hand_count / 9.0F;
     out[6] = p.board_count / 5.0F;
-    out[7] = (kDeckSize - p.deck_idx) / 40.0F;
+    out[7] = p.deck_remaining() / 40.0F;
     out[8] = static_cast<float>(p.manual_evolved);
     out[9] = p.sep / 2.0F;
     out[10] = static_cast<float>(p.bonus_pp);
@@ -42,43 +43,77 @@ void encode_player(float* out, const GameState& state, int seat) {
     for (int i = 0; i < p.board_count; ++i) {
         const auto& object = p.board[i];
         auto* row = out + kPlayerScalars + i * kBoardFeatures;
-        row[0] = (object.card_id - kFirstCard + 1) / static_cast<float>(kCardSlots);
+        row[0] = legacy ? (object.card_id - kFirstCard + 1) / static_cast<float>(kCardSlots)
+                        : local_feature(object.card_id, *matchup);
         row[1] = object.atk / 10.0F;
         row[2] = object.hp / 10.0F;
         row[3] = object.max_hp / 10.0F;
         row[4] = object.countdown / 5.0F;
-        row[5] = std::min(16, static_cast<int>(object.clue_count)) / 16.0F;
+        row[5] = std::min(16, static_cast<int>(std::max(object.clue_count, object.earth_count))) / 16.0F;
         row[6] = static_cast<int>(object.evolution) / 2.0F;
-        const bool can_attack = find_card(object.card_id)->kind == Kind::Follower && ready(object);
+        const bool can_attack = find_card(object.card_id)->kind == Kind::Follower && attack_ready(object);
         row[7] = static_cast<float>(can_attack);
         row[8] = static_cast<float>(can_attack && (object.readied || (object.abilities & FLAG_STORM)));
         row[9] = static_cast<float>((object.abilities & FLAG_WARD) != 0);
         row[10] = static_cast<float>(object.acted_this_turn);
         row[11] = static_cast<float>(object.silenced);
     }
-    for (int i = 0; i < p.hand_count; ++i) {
-        out[kHandZone + p.hand[i] - kFirstCard] += 1.0F / kHandLimit;
+    if (!legacy) {
+        for (int i = 0; i < p.hand_count; ++i) {
+            const auto card = p.hand[i];
+            const auto modifiers = p.hand_modifiers[i];
+            out[kHandZone + 3 * i] = local_feature(card, *matchup);
+            out[kHandZone + 3 * i + 1] = card_cost(*find_card(card), modifiers) / 10.0F;
+            out[kHandZone + 3 * i + 2] = modifiers.spellboost / 20.0F;
+        }
+        out[101] = p.plays_this_turn / 20.0F;
+        out[102] = p.followers_entered / 64.0F;
+        out[103] = p.crest_count / 5.0F;
+        for (int i = 0; i < p.crest_count; ++i) {
+            out[104 + 2 * i] = static_cast<int>(p.crests[i].id) / 255.0F;
+            out[105 + 2 * i] = p.crests[i].countdown / 4.0F;
+        }
+        out[114] = p.faith_count / 5.0F;
+        for (int i = 0; i < 2 && p.deck_idx + i < p.deck_end; ++i) {
+            out[115 + i] = local_feature(p.deck[p.deck_idx + i], *matchup);
+        }
+        int followers = 0;
+        int total_cost = 0;
+        for (int i = p.deck_idx; i < p.deck_end; ++i) {
+            const auto& card = *find_card(p.deck[i]);
+            followers += card.kind == Kind::Follower;
+            total_cost += card_cost(card, p.deck_modifiers[i]);
+        }
+        const auto remaining = static_cast<float>(std::max(1, p.deck_remaining()));
+        out[117] = followers / remaining;
+        out[118] = total_cost / (10.0F * remaining);
+        return;
     }
-    for (int i = p.deck_idx; i < kDeckSize; ++i) {
+    for (int i = 0; i < p.hand_count; ++i) {
+        if (p.hand[i] >= kFirstCard && p.hand[i] <= kLastForm) {
+            out[kHandZone + p.hand[i] - kFirstCard] += 1.0F / kHandLimit;
+        }
+    }
+    for (int i = p.deck_idx; i < p.deck_end; ++i) {
         const int index = p.deck[i] == kCorrector ? kDeckCardKinds - 1 : p.deck[i] - kFirstCard;
-        out[kDeckZone + index] += 1.0F / kDeckSize;
+        if (index >= 0 && index < kDeckCardKinds) out[kDeckZone + index] += 1.0F / kDeckSize;
     }
     for (int i = 0; i < p.crest_count; ++i) {
         const auto& crest = p.crests[i];
-        out[kCrestZone + static_cast<int>(crest.id) - 1] = crest.countdown / 4.0F;
+        const int index = static_cast<int>(crest.id) - 1;
+        if (index >= 0 && index < 3) out[kCrestZone + index] = crest.countdown / 4.0F;
     }
-    for (int i = 0; i < 2 && p.deck_idx + i < kDeckSize; ++i) {
+    for (int i = 0; i < 2 && p.deck_idx + i < p.deck_end; ++i) {
         out[kNextDraws + i] = (p.deck[p.deck_idx + i] - kFirstCard + 1) / static_cast<float>(kCardSlots);
     }
 }
 
-// All positions in one beam search share their deck arrays. Preserve hand/board order and RNG:
-// tied random targets are taken at a position in the ordered candidate list.
-struct Position {
+// The Phase 4B mirror has immutable turn decks and cannot produce the Phase 5 modifiers.
+struct LegacyPosition {
     static constexpr std::size_t word_count = 3 + kPlayers * (4 + 4 + 2 * kBoardLimit + kCrestLimit + 6 + 6);
     std::array<std::uint64_t, word_count> words{};
 
-    bool operator==(const Position&) const = default;
+    bool operator==(const LegacyPosition&) const = default;
 };
 
 std::uint64_t pack(std::initializer_list<unsigned> bytes) {
@@ -91,8 +126,8 @@ std::uint64_t pack(std::initializer_list<unsigned> bytes) {
     return result;
 }
 
-Position key(const GameState& state) {
-    Position position;
+LegacyPosition legacy_key(const GameState& state) {
+    LegacyPosition position;
     std::size_t n = 0;
     auto& w = position.words;
     w[n++] = state.rng_state;
@@ -134,12 +169,46 @@ Position key(const GameState& state) {
     return position;
 }
 
-struct PositionHash {
-    std::size_t operator()(const Position& position) const noexcept {
+struct LegacyPositionHash {
+    std::size_t operator()(const LegacyPosition& position) const noexcept {
         std::uint64_t hash = 0x0724DD61D03886F1;
         for (const auto word : position.words) {
             hash ^= word;
             hash *= 0x100000001b3;
+        }
+        return static_cast<std::size_t>(hash ^ (hash >> 32));
+    }
+};
+
+// Hash frequently changing fields. Full state equality resolves collisions, including deck mutations.
+struct PositionHash {
+    std::size_t operator()(const GameState& state) const noexcept {
+        std::uint64_t hash = state.rng_state;
+        const auto mix = [&](std::uint64_t value) {
+            hash = (hash ^ value) * 0x100000001b3ULL;
+        };
+        mix(state.next_creation_order | (static_cast<std::uint64_t>(state.turn_player) << 32) |
+            (static_cast<std::uint64_t>(state.turn_number) << 40));
+        mix(static_cast<unsigned>(state.outcome));
+        for (const auto& player : state.players) {
+            mix(player.deck_idx | (player.deck_end << 8) | (player.pp << 16) | (player.bonus_pp << 24));
+            mix(static_cast<std::uint16_t>(player.leader_hp) | (static_cast<std::uint64_t>(player.shadows) << 16));
+            mix(player.plays_this_turn | (static_cast<std::uint64_t>(player.followers_entered) << 16));
+            for (int i = 0; i < player.hand_count; ++i) {
+                const auto& card = player.hand_modifiers[i];
+                mix(player.hand[i] | (static_cast<std::uint64_t>(card.spellboost) << 16) |
+                    (static_cast<std::uint64_t>(card.fused_ply) << 24));
+            }
+            for (int i = 0; i < player.board_count; ++i) {
+                const auto& card = player.board[i];
+                mix(card.creation_order | (static_cast<std::uint64_t>(card.card_id) << 32) |
+                    (static_cast<std::uint64_t>(card.abilities) << 48));
+                mix(static_cast<std::uint16_t>(card.hp) | (static_cast<std::uint64_t>(card.atk) << 16) |
+                    (static_cast<std::uint64_t>(card.countdown) << 32) |
+                    (static_cast<std::uint64_t>(card.attacked_this_turn) << 40) |
+                    (static_cast<std::uint64_t>(card.attacked_twice) << 41) |
+                    (static_cast<std::uint64_t>(card.acted_this_turn) << 42));
+            }
         }
         return static_cast<std::size_t>(hash ^ (hash >> 32));
     }
@@ -150,6 +219,8 @@ struct Candidate {
     GameState decision;
     Prediction prediction;
     std::vector<Action> actions;
+    float score;
+    std::size_t order;
 };
 
 struct BeamNode {
@@ -163,38 +234,69 @@ struct Step {
     Action action;
 };
 
-std::vector<Candidate> beam(const GameState& initial, const Mlp& model, std::size_t width, bool trace) {
-    std::unordered_set<Position, PositionHash> seen, finished;
+template<bool Legacy>
+std::vector<Candidate> beam(const GameState& initial, const Mlp& model, std::size_t width, bool trace,
+                            const MatchupFeatures* matchup, bool ranked_only) {
+    using Key = std::conditional_t<Legacy, LegacyPosition, GameState>;
+    using Hash = std::conditional_t<Legacy, LegacyPositionHash, PositionHash>;
+    const auto key_for = [](const GameState& state) -> decltype(auto) {
+        if constexpr (Legacy) return legacy_key(state);
+        else return state;
+    };
+    std::unordered_set<Key, Hash> seen, finished;
     seen.reserve(width * 24);
     finished.reserve(width * 5);
-    seen.insert(key(initial));
-    std::vector<BeamNode> level{{initial, model.predict(extract_features(initial)), 0}}, next_level;
+    seen.insert(key_for(initial));
+    std::vector<BeamNode> level{{initial, model.predict(extract_features(initial, matchup)), 0}}, next_level;
+    level.reserve(width);
+    next_level.reserve(width);
+    std::vector<std::size_t> current{0};
+    std::vector<std::size_t> order;
     std::vector<Candidate> results;
     std::vector<Step> steps;
     if (trace) {
         steps.push_back({});
     }
     std::size_t serial = 0;
+    std::size_t completed = 0;
+    const auto lower_rank = [](const Candidate& a, const Candidate& b) {
+        return a.score != b.score ? a.score < b.score : a.order > b.order;
+    };
     const auto finish = [&](const auto& next, const auto& decision, Prediction prediction,
                             std::size_t parent, Action action) {
-        if (!finished.insert(key(next)).second) {
+        if (!finished.insert(key_for(next)).second) {
             return;
         }
-        auto& result = results.emplace_back(Candidate{next, decision, prediction, {}});
+        const auto order = completed++;
+        const float score = next.outcome != Outcome::Ongoing
+            ? 3.0F * outcome_value(next.outcome, decision.turn_player) - 0.5F
+            : prediction.value + 1.0F / (1.0F + std::exp(-prediction.policy_logit));
+        Candidate* result = nullptr;
+        if (ranked_only && results.size() == kRankedCandidates) {
+            const auto worst = std::min_element(results.begin(), results.end(), lower_rank);
+            if (score <= worst->score) return;
+            *worst = Candidate{next, decision, prediction, {}, score, order};
+            result = &*worst;
+        } else {
+            result = &results.emplace_back(Candidate{next, decision, prediction, {}, score, order});
+        }
         if (trace) {
-            result.actions.push_back(action);
+            result->actions.push_back(action);
             for (auto i = parent; i != 0; i = steps[i].parent) {
-                result.actions.push_back(steps[i].action);
+                result->actions.push_back(steps[i].action);
             }
-            std::reverse(result.actions.begin(), result.actions.end());
+            std::reverse(result->actions.begin(), result->actions.end());
         }
     };
     const auto better = [](const auto& a, const auto& b) {
         return a.prediction.value != b.prediction.value ? a.prediction.value > b.prediction.value : a.id < b.id;
     };
-    for (int depth = 0; depth <= kBeamSteps && !level.empty(); ++depth) {
+    for (int depth = 0; depth <= kBeamSteps && !current.empty(); ++depth) {
         next_level.clear();
-        for (const auto& node : level) {
+        order.clear();
+        const auto better_index = [&](std::size_t a, std::size_t b) { return better(next_level[a], next_level[b]); };
+        for (const auto index : current) {
+            const auto& node = level[index];
             auto ended = node.state;
             apply_legal_action(ended, {ActionType::EndTurn});
             finish(ended, node.state, node.prediction, node.id, {ActionType::EndTurn});
@@ -207,44 +309,89 @@ std::vector<Candidate> beam(const GameState& initial, const Mlp& model, std::siz
                 }
                 auto next = node.state;
                 apply_legal_action(next, action);
-                if (!seen.insert(key(next)).second) {
+                if (!seen.insert(key_for(next)).second) {
                     continue;
                 }
-                const auto prediction = model.predict(extract_features(next));
+                const auto prediction = model.predict(extract_features(next, matchup));
                 if (next.outcome != Outcome::Ongoing) {
                     finish(next, next, prediction, node.id, action);
                 } else {
-                    next_level.push_back({next, prediction, ++serial});
+                    const auto id = ++serial;
                     if (trace) {
                         steps.push_back({node.id, action});
+                    }
+                    if (order.size() < width) {
+                        order.push_back(next_level.size());
+                        next_level.push_back({next, prediction, id});
+                        std::push_heap(order.begin(), order.end(), better_index);
+                    } else if (prediction.value > next_level[order.front()].prediction.value) {
+                        // The newest position loses a value tie. Move indices, not game states, in the heap.
+                        std::pop_heap(order.begin(), order.end(), better_index);
+                        next_level[order.back()] = {next, prediction, id};
+                        std::push_heap(order.begin(), order.end(), better_index);
                     }
                 }
             }
         }
-        if (next_level.size() > width) {
-            std::nth_element(next_level.begin(), next_level.begin() + width, next_level.end(), better);
-            next_level.resize(width);
-        }
-        std::sort(next_level.begin(), next_level.end(), better);
+        std::sort_heap(order.begin(), order.end(), better_index);
+        current.swap(order);
         level.swap(next_level);
+    }
+    if (ranked_only) {
+        std::sort(results.begin(), results.end(), [](const auto& a, const auto& b) { return a.order < b.order; });
     }
     return results;
 }
 
-float score(const Candidate& candidate) {
-    if (candidate.next.outcome != Outcome::Ongoing) {
-        return 3.0F * outcome_value(candidate.next.outcome, candidate.decision.turn_player) - 0.5F;
-    }
-    return candidate.prediction.value + 1.0F / (1.0F + std::exp(-candidate.prediction.policy_logit));
-}
-
 } // namespace
 
-Features extract_features(const GameState& state) {
+MatchupFeatures::MatchupFeatures(const Deck& first, const Deck& second) {
+    legacy_ = std::is_permutation(first.begin(), first.end(), kMirrorDeck.begin()) &&
+              std::is_permutation(second.begin(), second.end(), kMirrorDeck.begin());
+    const auto add = [&](CardId id) {
+        if (id && std::find(cards_.begin(), cards_.end(), id) == cards_.end()) cards_.push_back(id);
+    };
+    for (const auto& deck : {&first, &second}) {
+        for (auto id : *deck) add(id);
+    }
+    const auto collect = [&](std::span<const Effect> effects) {
+        for (const auto& effect : effects) {
+            add(effect.card);
+            if (effect.operation == Operation::AddEarth) add(kEarthSigil);
+            if (effect.operation == Operation::GrantCrest) {
+                if (const auto* crest = find_crest(effect.crest)) {
+                    for (const auto& step : crest->effects) add(step.card);
+                }
+            }
+        }
+    };
+    for (std::size_t i = 0; i < cards_.size(); ++i) {
+        const auto* card = find_card(cards_[i]);
+        if (!card || !card->implemented) throw std::invalid_argument("Invalid card in matchup");
+        add(card->crystal_form);
+        collect(card->effects);
+    }
+    std::sort(cards_.begin(), cards_.end(), [](CardId a, CardId b) {
+        const auto* left = find_card(a);
+        const auto* right = find_card(b);
+        return std::pair{left->official_id, a} < std::pair{right->official_id, b};
+    });
+    if (!cards_.empty()) {
+        by_card_.assign(static_cast<std::size_t>(*std::max_element(cards_.begin(), cards_.end())) + 1, -1);
+        for (std::size_t index = 0; index < cards_.size(); ++index) by_card_[cards_[index]] = static_cast<int>(index);
+    }
+}
+
+int MatchupFeatures::local_id(CardId id) const {
+    return id < by_card_.size() ? by_card_[id] : -1;
+}
+
+Features extract_features(const GameState& state, const MatchupFeatures* matchup) {
     Features features{};
-    encode_player(features.data(), state, state.turn_player);
-    encode_player(features.data() + kPlayerFeatures, state, 1 - state.turn_player);
+    encode_player(features.data(), state, state.turn_player, matchup);
+    encode_player(features.data() + kPlayerFeatures, state, 1 - state.turn_player, matchup);
     features[240] = state.turn_number / 40.0F;
+    if (matchup && !matchup->legacy_mirror()) features[241] = 1.0F;
     return features;
 }
 
@@ -268,8 +415,9 @@ struct Search::Node {
     std::vector<Edge> edges;
 };
 
-Search::Search(const Mlp& first, const Mlp& second, std::mt19937& rng, SearchOptions options)
-    : models_{&first, &second}, rng_(rng), options_(options) {
+Search::Search(const Mlp& first, const Mlp& second, std::mt19937& rng, SearchOptions options,
+               const MatchupFeatures* matchup)
+    : models_{&first, &second}, rng_(rng), options_(options), matchup_(matchup) {
     if (options.simulations < 1) {
         throw std::invalid_argument("Search needs a positive simulation count");
     }
@@ -278,15 +426,15 @@ Search::Search(const Mlp& first, const Mlp& second, std::mt19937& rng, SearchOpt
 Search::~Search() = default;
 
 void Search::expand(Node& node, std::size_t width) {
-    auto candidates = beam(node.state, *models_[node.state.turn_player], width, options_.record_actions);
-    std::vector<float> scores;
-    scores.reserve(candidates.size());
-    std::transform(candidates.begin(), candidates.end(), std::back_inserter(scores), score);
+    const auto& model = *models_[node.state.turn_player];
+    auto candidates = !matchup_ || matchup_->legacy_mirror()
+        ? beam<true>(node.state, model, width, options_.record_actions, matchup_, !options_.exploration)
+        : beam<false>(node.state, model, width, options_.record_actions, matchup_, !options_.exploration);
     std::vector<std::size_t> order(candidates.size());
     std::iota(order.begin(), order.end(), 0);
     const auto limit = std::min(candidates.size(), static_cast<std::size_t>(kRankedCandidates));
     std::partial_sort(order.begin(), order.begin() + limit, order.end(), [&](const auto a, const auto b) {
-        return scores[a] != scores[b] ? scores[a] > scores[b] : a < b;
+        return candidates[a].score != candidates[b].score ? candidates[a].score > candidates[b].score : a < b;
     });
     const auto selected = options_.exploration ? std::min(candidates.size(), limit + kRandomCandidates) : limit;
     for (auto i = limit; i < selected; ++i) {
@@ -315,7 +463,7 @@ std::array<float, kPlayers> Search::simulate(Node& node, const float* root_prior
     if (node.edges.empty()) {
         if (!node.evaluated) {
             node.evaluated = true;
-            const auto estimate = models_[player]->predict(extract_features(node.state)).value;
+            const auto estimate = models_[player]->predict(extract_features(node.state, matchup_)).value;
             return player == 0 ? std::array{estimate, 1.0F - estimate} : std::array{1.0F - estimate, estimate};
         }
         expand(node, kBeamWidth);
@@ -393,7 +541,7 @@ Decision Search::choose(const GameState& state, bool policy) {
             winning = i;
         }
         if (policy) {
-            result.policy.push_back({extract_features(edge.candidate.decision),
+            result.policy.push_back({extract_features(edge.candidate.decision, matchup_),
                                      static_cast<float>(edge.visits) / static_cast<float>(root_->visits)});
         }
     }
@@ -423,14 +571,14 @@ Decision Search::choose(const GameState& state, bool policy) {
     return result;
 }
 
-Action choose_mulligan(const GameState& state, const Mlp& model, std::mt19937& rng) {
+Action choose_mulligan(const GameState& state, const Mlp& model, std::mt19937& rng, const MatchupFeatures* matchup) {
     constexpr int samples = 8;
     const int actor = state.turn_player;
     std::array<float, 1 << kOpeningHand> values{};
     for (int i = 0; i < samples; ++i) {
         auto sample = state;
         for (auto& player : sample.players) {
-            std::shuffle(player.deck.begin() + player.deck_idx, player.deck.end(), rng);
+            std::shuffle(player.deck.begin() + player.deck_idx, player.deck.begin() + player.deck_end, rng);
         }
         const auto high = static_cast<std::uint64_t>(rng()) << 32;
         sample.rng_state = high | rng();
@@ -443,7 +591,7 @@ Action choose_mulligan(const GameState& state, const Mlp& model, std::mt19937& r
             if (actor == 1) {
                 apply_legal_action(next, {ActionType::EndTurn});
             }
-            values[mask.choice] += model.predict(extract_features(next)).value;
+            values[mask.choice] += model.predict(extract_features(next, matchup)).value;
         }
     }
     const auto best = std::max_element(values.begin(), values.end()) - values.begin();

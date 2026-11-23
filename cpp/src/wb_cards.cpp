@@ -1,129 +1,35 @@
 #include "wb_cards.hpp"
+#include "play_json.hpp"
+
+#include <algorithm>
+#include <fstream>
 
 namespace svwb::wb {
 namespace {
 
-using enum Kind;
-using enum Trigger;
-using enum Operation;
+struct OfficialCard {
+    std::uint32_t official_id;
+    CardId id;
+};
 
-constexpr std::array<CardDef, kCardSlots> cards{{
-    {.id=kWingedStatue, .name="有翼の石像", .kind=Amulet, .cost=1, .countdown=4, .act_cost=1, .effects={{
-        {LastWords, Summon, Target::None, 1, kHolyFalcon},
-        {OnAct, ReduceCountdown, Target::Self, 1},
-    }}},
-    {.id=kLilium, .name="図書室の魔女・リリウム", .kind=Follower, .cost=2, .atk=2, .hp=1, .effects={{
-        {LastWords, Draw, Target::None, 1},
-        {OnEvolve, Silence, Target::ChosenEnemyFollower},
-        {OnEvolve, Damage, Target::ChosenEnemyFollower, 2},
-    }}},
-    {.id=kExias, .name="愛の天使・エクシアス", .kind=Follower, .cost=2, .atk=2, .hp=1,
-     .abilities=FLAG_RUSH, .effects={{{OnPlay, AddHand, Target::None, 1, kEvidence}}}},
-    {.id=kCraftsman, .name="地害の加工人", .kind=Follower, .cost=2, .atk=3, .hp=1,
-     .effects={{{LastWords, AddHand, Target::None, 2, kEvidence}}}},
-    {.id=kColette, .name="セイントエクソシスト・コレット", .kind=Follower, .cost=3, .atk=2, .hp=4,
-     .abilities=FLAG_WARD, .effects={{
-        {OnPlay, EvolveWithAlly, Target::Self},
-        {OnEvolved, Damage, Target::RandomEnemyFollower, 1},
-        {OnEvolved, Damage, Target::RandomEnemyFollower, 1},
-    }}},
-    {.id=kAlmiraj, .name="ミラクルアルミラージ", .kind=Follower, .cost=3, .atk=2, .hp=1,
-     .abilities=FLAG_STORM, .crystal_form=kAlmirajCrystal},
-    {.id=kDunamis, .name="信心の天使・デュナメス", .kind=Follower, .cost=3, .atk=2, .hp=2, .effects={{
-        {OnPlay, Damage, Target::ChosenEnemyFollower, 2},
-        {OnPlay, AddHand, Target::None, 1, kEvidence},
-        {OnEvolve, Damage, Target::ChosenEnemyFollower, 2},
-        {OnEvolve, AddHand, Target::None, 1, kEvidence},
-    }}},
-    {.id=kTrainer, .name="地害の調教師", .kind=Follower, .cost=3, .atk=3, .hp=3, .effects={{
-        {OnPlay, AddHand, Target::None, 1, kRabbit},
-        {OnEvolve, RestorePp, Target::None, 1},
-    }}},
-    {.id=kTestimony, .name="不毛の証言", .kind=Spell, .cost=3, .modes=2, .effects={{
-        {.trigger=OnPlay, .operation=Damage, .target=Target::RandomEnemyFollower, .amount=4, .mode=1},
-        {.trigger=OnPlay, .operation=GrantCrest, .mode=1, .crest=CrestId::Testimony},
-        {.trigger=OnPlay, .operation=Summon, .amount=1, .card=kRabbit, .mode=2},
-    }}},
-    {.id=kProjectedStatue, .name="投影の鳥像", .kind=Amulet, .cost=4, .countdown=2, .act_cost=2, .effects={{
-        {LastWords, Summon, Target::None, 1, kSplendidHawk},
-        {OnAct, ReduceCountdown, Target::Self, 2},
-    }}},
-    {.id=kRituel, .name="希望の光彩・リテュエル", .kind=Follower, .cost=5, .atk=2, .hp=4, .modes=3, .effects={{
-        {.trigger=OnPlay, .operation=Damage, .target=Target::AllEnemyFollowers, .amount=3, .mode=1},
-        {.trigger=OnPlay, .operation=Damage, .target=Target::EnemyLeader, .amount=3, .mode=2},
-        {.trigger=OnPlay, .operation=Heal, .target=Target::OwnLeader, .amount=3, .mode=3},
-        {OnPlay, Damage, Target::Self, 3},
-        {.trigger=OnEvolve, .operation=GrantCrest, .crest=CrestId::Rituel},
-    }}},
-    {.id=kPropagation, .name="荒廃の繁殖", .kind=Spell, .cost=5, .enhance_cost=8, .effects={{
-        {OnPlay, Summon, Target::None, 2, kRabbit},
-        {.trigger=OnPlay, .operation=Summon, .amount=2, .card=kRabbit, .mode=kEnhancedMode},
-    }}},
-    {.id=kRapid, .name="地害の三悪・ラピッドハット", .kind=Follower, .cost=6, .atk=4, .hp=4, .effects={{
-        {OnPlay, Banish, Target::ChosenEnemyFollower},
-        {OnPlay, Summon, Target::None, 1, kRabbit},
-        {.trigger=OnEvolve, .operation=GrantCrest, .crest=CrestId::Rapid},
-        {.trigger=OnSuperEvolve, .operation=ExtendCrest, .amount=1, .crest=CrestId::Rapid},
-    }}},
-    {.id=kTeresa, .name="エルゴンプリーステス・テレサ", .kind=Follower, .cost=7, .atk=3, .hp=3, .effects={{
-        {.trigger=OnPlay, .operation=SummonModified, .amount=2, .card=kHealingSister,
-         .health_modifier=-2, .granted_abilities=FLAG_STORM},
-    }}},
-    {.id=kRabbit, .name="地害の兎", .kind=Follower, .cost=2, .atk=1, .hp=1, .effects={{
-        {OnEnter, BanishLowestAndEvolve, Target::Self},
-        {LastWords, Damage, Target::EnemyLeader, 2},
-    }}},
-    {.id=kEvidence, .name="神域の物証", .kind=Amulet, .cost=1, .act_cost=1, .clue=true, .effects={{
-        {OnAct, Draw, Target::None, 1},
-        {OnAct, SpendClue, Target::Self, 1},
-    }}},
-    {.id=kHolyFalcon, .name="ホーリーファルコン", .kind=Follower, .cost=3, .atk=2, .hp=2, .abilities=FLAG_STORM},
-    {.id=kSplendidHawk, .name="壮麗なる隼", .kind=Follower, .cost=6, .atk=4, .hp=4, .abilities=FLAG_STORM},
-    {.id=kHealingSister, .name="癒しのシスター", .kind=Follower, .cost=6, .atk=3, .hp=5, .abilities=FLAG_WARD,
-     .effects={{{OnPlay, Heal, Target::OwnLeader, 5}}}},
-    {.id=kAlmirajCrystal, .name="ミラクルアルミラージ", .kind=Amulet, .cost=1, .countdown=3, .act_cost=1, .effects={{
-        {LastWords, Summon, Target::None, 1, kAlmiraj},
-        {OnAct, ReduceCountdown, Target::Self, 1},
-    }}},
-    {.id=kCorrector, .name="地害の矯正者", .kind=Follower, .cost=8, .atk=3, .hp=5, .effects={{
-        {OnPlay, Banish, Target::ChosenEnemyFollower},
-        {OnPlay, Summon, Target::None, 2, kRabbit},
-        {OnSuperEvolve, Draw, Target::None, 2},
-        {OnSuperEvolve, Heal, Target::OwnLeader, 2},
-    }}, .official_id=11063110},
-}};
-
-constexpr std::array<CrestDef, 3> crests{{
-    {CrestId::Testimony, 2, CrestClock::Start, {{
-        {TurnStart, Heal, Target::OwnLeader, 1},
-        {TurnStart, AddHand, Target::None, 1, kEvidence},
-    }}},
-    {CrestId::Rituel, 1, CrestClock::Start, {{
-        {LastWords, SummonEvolved, Target::None, 0, kRituel},
-    }}},
-    {CrestId::Rapid, 1, CrestClock::Start, {{
-        {TurnStart, Summon, Target::None, 1, kRabbit},
-    }}},
-}};
-
-static_assert([] {
-    for (int i = 0; i < kCardSlots; ++i) {
-        if (cards[i].id != kFirstCard + i) {
-            return false;
-        }
-    }
-    return true;
-}());
+#include "wb_card_data.inc"
 
 } // namespace
 
 const CardDef* find_card(CardId id) {
-    return id >= kFirstCard && id <= kLastForm ? &cards[id - kFirstCard] : nullptr;
+    const auto index = static_cast<int>(id) - kFirstCard;
+    return index >= 0 && index < static_cast<int>(std::size(cards)) ? &cards[index] : nullptr;
+}
+
+const CardDef* find_official_card(std::uint32_t id) {
+    const auto found = std::lower_bound(std::begin(official_cards), std::end(official_cards), id,
+        [](const auto& left, auto right) { return left.official_id < right; });
+    return found != std::end(official_cards) && found->official_id == id ? find_card(found->id) : nullptr;
 }
 
 const CrestDef* find_crest(CrestId id) {
-    const auto index = static_cast<int>(id) - 1;
-    return index >= 0 && index < static_cast<int>(crests.size()) ? &crests[index] : nullptr;
+    const auto found = std::find_if(std::begin(crests), std::end(crests), [id](const auto& crest) { return crest.id == id; });
+    return found == std::end(crests) ? nullptr : found;
 }
 
 CardId printed_card(CardId id) {
@@ -131,7 +37,59 @@ CardId printed_card(CardId id) {
 }
 
 bool is_deck_card(CardId id) {
-    return (id >= kFirstCard && id <= kTeresa) || id == kCorrector;
+    const auto* card = find_card(id);
+    return card && card->implemented && card->deck_eligible;
+}
+
+int card_cost(const CardDef& card, CardModifiers modifiers) {
+    return std::max(0, card.cost + modifiers.cost - card.spellboost_cost_reduction * modifiers.spellboost);
+}
+
+Deck read_deck(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        throw std::invalid_argument("Could not open deck JSON");
+    }
+    std::string contents(16385, '\0');
+    file.read(contents.data(), static_cast<std::streamsize>(contents.size()));
+    contents.resize(static_cast<std::size_t>(file.gcount()));
+    if (contents.size() > 16384 || file.bad()) {
+        throw std::invalid_argument("Could not read deck JSON (limit 16 KiB)");
+    }
+    std::string_view json(contents);
+    if (json.starts_with("\xef\xbb\xbf")) json.remove_prefix(3);
+    const auto parsed = play::RequestParser(json).parse();
+    const auto rows = parsed.find("cards");
+    const auto* list = rows == parsed.end() ? nullptr : std::get_if<play::Json::Array>(&rows->second.value);
+    if (!list) {
+        throw std::invalid_argument("Deck JSON requires a cards array");
+    }
+    Deck deck{};
+    int used = 0;
+    for (const auto& row : *list) {
+        const auto* card = std::get_if<play::Json::Object>(&row.value);
+        if (!card || !card->contains("card_id") || !card->contains("copies")) {
+            throw std::invalid_argument("Each deck row requires card_id and copies");
+        }
+        const auto* id = std::get_if<std::uint64_t>(&card->at("card_id").value);
+        const auto* copies = std::get_if<std::uint64_t>(&card->at("copies").value);
+        if (!id || *id > UINT32_MAX || !copies || *copies < 1 || *copies > 3 || *copies > kDeckSize - used) {
+            throw std::invalid_argument("Invalid deck card ID or copy count");
+        }
+        const auto* def = find_official_card(static_cast<std::uint32_t>(*id));
+        if (!def || !is_deck_card(def->id)) {
+            throw std::invalid_argument("Card lacks playable engine rules: " + std::to_string(*id));
+        }
+        if (std::find(deck.begin(), deck.begin() + used, def->id) != deck.begin() + used) {
+            throw std::invalid_argument("Duplicate deck row: " + std::to_string(*id));
+        }
+        std::fill_n(deck.begin() + used, *copies, def->id);
+        used += static_cast<int>(*copies);
+    }
+    if (used != kDeckSize) {
+        throw std::invalid_argument("A deck must contain exactly 40 cards");
+    }
+    return deck;
 }
 
 } // namespace svwb::wb

@@ -1,0 +1,13 @@
+[
+  {
+    "base_card_id": 10962120,
+    "name": "ミラクルアルミラージ",
+    "form": "結晶",
+    "play_cost": 1,
+    "form_type": "アミュレット",
+    "effect_text": "【カウントダウン_3】\n【ラストワード】『ミラクルアルミラージ』1枚を自分の場に出す。\nコスト1【アクト】これのカウントを-1する。",
+    "status": "verified_secondary_source",
+    "source_url": "https://gamewith.jp/shadowverse-wb/573818",
+    "note": "公式API形式との照合未完了。カード本体の『【疾走】』とは別の結晶能力。"
+  }
+]

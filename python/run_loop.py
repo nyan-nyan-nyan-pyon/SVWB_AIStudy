@@ -2,18 +2,18 @@
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 from pathlib import Path
-import re
 import shutil
-import subprocess
 import tempfile
 import time
 
 import torch
 
 from plot_metrics import plot_metrics
+from match_runner import invoke
 from train import generation_dir, initialize_checkpoint, pick_device, train_generation
 
 
@@ -21,25 +21,18 @@ ROOT = Path(__file__).resolve().parents[1]
 LOG_FILES = ("val_log.bin", "pol_log.bin")
 
 
-def invoke(executable: Path, arguments):
-    command = [str(executable), *(str(value) for value in arguments)]
-    completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if completed.returncode != 0:
-        raise RuntimeError(f"C++ match exited with {completed.returncode}: {completed.stderr.strip()}")
-    counters = dict(re.findall(r"(?:^|\s)([A-Za-z_]+)=([^\s]+)", completed.stdout))
-    required = ("games", "A_first", "A_second", "A_wins", "B_wins", "draws", "wall_seconds")
-    if any(key not in counters for key in required):
-        raise RuntimeError(f"C++ match did not emit counters: {completed.stdout.strip()}")
-    games, first, second, wins, losses, draws = (int(counters[key]) for key in required[:-1])
-    if not games or first + second != games or wins + losses + draws != games:
-        raise RuntimeError("C++ match produced invalid game counts")
-    return counters
+def wb_decks(args):
+    flags = ["--rules", "wb"]
+    for flag, deck in (("--deck-a", args.deck_a), ("--deck-b", args.deck_b)):
+        if deck is not None:
+            flags.extend((flag, deck))
+    return flags
 
 
 def evaluate(args, weights, previous=None):
     first_count = 2 * (args.eval_games // 4)
     assignments = (
-        [(["--rules", "wb"], args.eval_games)]
+        [(wb_decks(args), args.eval_games)]
         if args.rules == "wb"
         else [(["--deck-a", "A", "--deck-b", "B"], first_count),
               (["--deck-a", "B", "--deck-b", "A"], args.eval_games - first_count)]
@@ -98,7 +91,12 @@ def publish_metrics(output, rows):
 def config_for(args):
     keys = ("games", "seconds", "threads", "simulations", "eval_games", "epochs", "batch_size",
             "replay_window", "seed", "minimum_convergence", "device", "rules")
-    return {key: getattr(args, key) for key in keys}
+    result = {key: getattr(args, key) for key in keys}
+    for key in ("deck_a", "deck_b"):
+        path = getattr(args, key)
+        if path is not None:
+            result[key] = {"file": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    return result
 
 
 def initialize_run(args, device):
@@ -150,13 +148,15 @@ def run_generation(args, generation, rows, device):
             work = Path(work_name)
             limits = (["--games", args.games] if args.games else []) + (
                 ["--seconds", args.seconds] if args.seconds else [])
-            deck_args = ["--rules", "wb"] if args.rules == "wb" else ["--deck-a", "A", "--deck-b", "B"]
+            deck_args = wb_decks(args) if args.rules == "wb" else ["--deck-a", "A", "--deck-b", "B"]
             counters = invoke(args.exe, [
                 *limits, "--threads", args.threads, "--simulations", args.simulations, "--seed", seed,
                 *deck_args, "--weights", previous / "weights.bin", "--log-dir", work,
             ])
             for filename in LOG_FILES:
                 shutil.copyfile(work / filename, stage / filename)
+            if (work / "matchup_features.json").is_file():
+                shutil.copyfile(work / "matchup_features.json", stage / "matchup_features.json")
 
         trained_at = time.perf_counter()
         print(f"Generation {generation}: training on replay", flush=True)
@@ -194,13 +194,15 @@ def run_generation(args, generation, rows, device):
 
 
 def parse_args():
-    default_exe = (ROOT / "build/windows-release/Release/svwb_ai.exe"
-                   if (ROOT / "build/windows-release/Release/svwb_ai.exe").exists()
-                   else ROOT / "build/svwb_ai")
+    executables = [ROOT / "build/phase5a-release/Release/svwb_ai.exe",
+                   ROOT / "build/windows-release/Release/svwb_ai.exe", ROOT / "build/svwb_ai"]
+    default_exe = next((path for path in executables if path.is_file()), executables[-1])
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--exe", type=Path, default=default_exe)
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--rules", choices=("legacy", "wb"), default="legacy")
+    parser.add_argument("--rules", choices=("legacy", "wb"))
+    parser.add_argument("--deck-a", type=Path)
+    parser.add_argument("--deck-b", type=Path)
     parser.add_argument("--work-dir", type=Path, default=Path(tempfile.gettempdir()))
     parser.add_argument("--generations", type=int, default=10)
     parser.add_argument("--games", type=int, default=0, help="Self-play games per generation")
@@ -217,6 +219,16 @@ def parse_args():
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
+    custom_decks = args.deck_a is not None or args.deck_b is not None
+    if custom_decks and args.rules == "legacy":
+        parser.error("Deck JSON files require WB rules")
+    args.rules = args.rules or ("wb" if custom_decks else "legacy")
+    if custom_decks and args.output_dir is None:
+        parser.error("Specify --output-dir for a custom deck run")
+    for key in ("deck_a", "deck_b"):
+        path = getattr(args, key)
+        if path is not None:
+            setattr(args, key, path.resolve(strict=True))
     if args.games < 0 or args.seconds < 0 or not 0 <= args.seed < 2**32:
         parser.error("Invalid self-play limits or seed")
     if args.learning_rate is not None and (not math.isfinite(args.learning_rate) or args.learning_rate <= 0):
