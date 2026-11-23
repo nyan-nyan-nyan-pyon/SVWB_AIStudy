@@ -124,5 +124,9 @@ if(BUILD_TESTING)
         add_test(NAME wb_play_json_lines COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/cpp/tests/check_play_cli.py" "$<TARGET_FILE:svwb_play_cli>")
         set_tests_properties(wb_play_json_lines PROPERTIES TIMEOUT 60)
+        add_test(NAME wb_deck_portal_import COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cpp/tests/check_deck_import.py"
+            --stress-cli "$<TARGET_FILE:test_wb>" --play-cli "$<TARGET_FILE:svwb_play_cli>")
+        set_tests_properties(wb_deck_portal_import PROPERTIES TIMEOUT 60)
     endif()
 endif()

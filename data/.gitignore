@@ -4,6 +4,8 @@
 !cards/*.json
 !decks/
 !decks/*.json
+!decks/phase5c/
+!decks/phase5c/*.json
 !phase5a-matchups/
 !phase5a-matchups/win_rates.csv
 !phase5a-matchups/win_rates.md

@@ -2,7 +2,9 @@
 #include "wb_search.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
+#include <filesystem>
 #include <iomanip>
 #include <initializer_list>
 #include <iostream>
@@ -2711,30 +2713,26 @@ void validate_rotation(const GameState& state) {
     }
 }
 
-int stress_rotation(std::span<const CardId> rotation, int games, std::uint64_t seed, std::string_view label) {
+int stress_decks(std::span<const CardId> rotation, int games, std::uint64_t seed, std::string_view label,
+                 auto&& decks_for_game) {
     std::mt19937_64 rng(seed);
-    std::vector<CardId> pool;
-    for (int copy = 0; copy < 3; ++copy) pool.insert(pool.end(), rotation.begin(), rotation.end());
     std::vector<CardId> played;
     int max_actions = 0;
     std::uint64_t total_actions = 0;
     const auto started = std::chrono::steady_clock::now();
     for (int game = 0; game < games; ++game) {
-        // Both seats inherit the same legal deck, with up to three copies per card.
-        std::shuffle(pool.begin(), pool.end(), rng);
-        Deck deck{};
-        std::copy_n(pool.begin(), kDeckSize, deck.begin());
+        const auto [first, second] = decks_for_game(game, rng);
         const auto game_seed = rng();
-        auto state = new_game(deck, deck, game_seed);
         int actions = 0;
         try {
+            auto state = new_game(first, second, game_seed);
             validate_rotation(state);
             while (state.outcome == Outcome::Ongoing) {
                 CHECK(actions < 2048);
                 const auto choices = legal_actions(state);
                 CHECK(!choices.empty());
                 const auto move = choices[std::uniform_int_distribution<int>(0, choices.size() - 1)(rng)];
-                if (move.type == Play) {
+                if (!rotation.empty() && move.type == Play) {
                     const auto id = state.players[state.turn_player].hand[move.src];
                     if (std::find(played.begin(), played.end(), id) == played.end()) played.push_back(id);
                 }
@@ -2744,7 +2742,7 @@ int stress_rotation(std::span<const CardId> rotation, int games, std::uint64_t s
             }
             CHECK(legal_actions(state).empty());
         } catch (const std::exception& error) {
-            std::cerr << "Rotation game " << game + 1 << " seed=" << game_seed << " step=" << actions << ": "
+            std::cerr << label << " game " << game + 1 << " seed=" << game_seed << " step=" << actions << ": "
                       << error.what() << '\n';
             return 1;
         }
@@ -2755,11 +2753,36 @@ int stress_rotation(std::span<const CardId> rotation, int games, std::uint64_t s
         return std::find(played.begin(), played.end(), id) != played.end();
     }));
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-    std::cout << "PASS " << label << " games=" << games << " seed=" << seed << " cards_played=" << rotation.size()
-              << " actions=" << total_actions << " max_actions=" << max_actions << " invariant_failures=0\n"
+    std::cout << "PASS " << label << " games=" << games << " seed=" << seed;
+    if (!rotation.empty()) std::cout << " cards_played=" << rotation.size();
+    std::cout << " actions=" << total_actions << " max_actions=" << max_actions << " invariant_failures=0\n"
               << std::fixed << std::setprecision(3) << "elapsed_seconds=" << secs
               << " games_per_second=" << games / secs << " (single thread, all states checked)\n";
     return 0;
+}
+
+int stress_rotation(std::span<const CardId> rotation, int games, std::uint64_t seed, std::string_view label) {
+    std::vector<CardId> pool;
+    for (int copy = 0; copy < 3; ++copy) pool.insert(pool.end(), rotation.begin(), rotation.end());
+    return stress_decks(rotation, games, seed, label, [&](int, auto& rng) {
+        std::shuffle(pool.begin(), pool.end(), rng);
+        Deck deck{};
+        std::copy_n(pool.begin(), kDeckSize, deck.begin());
+        return std::pair{deck, deck};
+    });
+}
+
+int stress_deck_pair(std::string_view deck_a, std::string_view deck_b, std::string_view count) {
+    int games = 0;
+    const auto [end, error] = std::from_chars(count.data(), count.data() + count.size(), games);
+    if (error != std::errc{} || end != count.data() + count.size() || games < 2 || games % 2 != 0) {
+        throw std::invalid_argument("Deck-pair stress requires a positive even game count");
+    }
+    const auto a = read_deck(std::filesystem::path(deck_a));
+    const auto b = read_deck(std::filesystem::path(deck_b));
+    return stress_decks({}, games, 2026, "fixed_deck_pair", [&](int game, auto&) {
+        return game % 2 == 0 ? std::pair{a, b} : std::pair{b, a};
+    });
 }
 
 int stress_with_neutral(std::span<const CardId> faction, std::uint64_t seed, std::string_view label) {
@@ -2932,6 +2955,14 @@ void search_forced_lethal() {
 
 int main(int argc, char** argv) {
     std::cout << "GameState_size_bytes=" << sizeof(GameState) << '\n';
+    if (argc == 5 && std::string_view(argv[1]) == "--deck-pair-stress") {
+        try {
+            return stress_deck_pair(argv[2], argv[3], argv[4]);
+        } catch (const std::exception& error) {
+            std::cerr << error.what() << '\n';
+            return 1;
+        }
+    }
     if (argc == 1) {
         return units();
     }
@@ -2975,6 +3006,6 @@ int main(int argc, char** argv) {
     std::cerr << "Usage: test_wb [--stress|--rotation-unit|--rotation-stress|--elf-royal-unit|--elf-stress|--royal-stress"
                  "|--dragon-nightmare-unit|--dragon-stress|--nightmare-stress|--witch-nemesis-unit|--witch-stress"
                  "|--nemesis-stress|--rotation-registry|--full-rotation-stress|--actor-audit|--canonicalization"
-                 "|--forced-lethal]\n";
+                 "|--forced-lethal|--deck-pair-stress DECK_A DECK_B GAMES]\n";
     return 2;
 }

@@ -1,0 +1,69 @@
+{
+  "name": "エルフ",
+  "class": "エルフ",
+  "class_id": 1,
+  "format_version": 1,
+  "source_hash": "1.1.e4Gg.e4Gg.e4Gg.e6kU.e6x8.e6x8.e6x8.eVLe.eVLe.eVLe.etGk.etGk.etGk.etl-.etl-.etl-.etm8.etm8.fFRw.fFRw.fFRw.fGAU.fGAU.fGAU.fds6.fds6.fds6.fe5k.fe5k.fe5k.feLM.feLM.feLM.feOU.feOU.fea-.fea-.fea-.fzqM.fzqM",
+  "cards": [
+    {
+      "card_id": 10503210,
+      "copies": 3
+    },
+    {
+      "card_id": 10513310,
+      "copies": 1
+    },
+    {
+      "card_id": 10514120,
+      "copies": 3
+    },
+    {
+      "card_id": 10614120,
+      "copies": 3
+    },
+    {
+      "card_id": 10712110,
+      "copies": 3
+    },
+    {
+      "card_id": 10714110,
+      "copies": 3
+    },
+    {
+      "card_id": 10714120,
+      "copies": 2
+    },
+    {
+      "card_id": 10811130,
+      "copies": 3
+    },
+    {
+      "card_id": 10814110,
+      "copies": 3
+    },
+    {
+      "card_id": 10911110,
+      "copies": 3
+    },
+    {
+      "card_id": 10912110,
+      "copies": 3
+    },
+    {
+      "card_id": 10913110,
+      "copies": 3
+    },
+    {
+      "card_id": 10913310,
+      "copies": 2
+    },
+    {
+      "card_id": 10914110,
+      "copies": 3
+    },
+    {
+      "card_id": 11001110,
+      "copies": 2
+    }
+  ]
+}

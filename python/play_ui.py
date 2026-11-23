@@ -24,10 +24,11 @@ MAX_REQUEST = 4096
 def find_executable():
     name = "svwb_play_cli.exe" if os.name == "nt" else "svwb_play_cli"
     candidates = (
+        ROOT / "build/phase5c-p0-release/Release" / name,
+        ROOT / "build/Release" / name,
         ROOT / "build/phase5a-release/Release" / name,
         ROOT / "build/windows-release/Release" / name,
         ROOT / "build/windows-release" / name,
-        ROOT / "build/Release" / name,
         ROOT / "build" / name,
     )
     return next((path for path in candidates if path.is_file()), candidates[0 if os.name == "nt" else -1])
@@ -139,7 +140,10 @@ def list_choices(directory, pattern, default, label):
         key = str(len(options))
         if path.suffix == ".json":
             try:
-                name = json.loads(path.read_text(encoding="utf-8-sig")).get("name") or path.stem
+                deck = json.loads(path.read_text(encoding="utf-8-sig"))
+                if not isinstance(deck.get("cards"), list):
+                    continue
+                name = deck.get("name") or path.stem
             except (OSError, UnicodeError, ValueError, AttributeError):
                 continue
         else:
@@ -258,7 +262,7 @@ def main():
         parser.error("--seed must be in 0..9007199254740991")
     model_name = "第25世代モデル" if args.weights.resolve() == DEFAULT_WEIGHTS else args.weights.name
     models, model_options = list_choices(args.models_dir, "**/weights.bin", args.weights.resolve(), model_name)
-    decks, deck_options = list_choices(args.deck_dir, "*.json", None, "確定ビショップ")
+    decks, deck_options = list_choices(args.deck_dir, "**/*.json", None, "確定ビショップ")
     engine = EngineManager(args.exe.resolve(), args.simulations, args.seed, models, decks)
     config = {"model": model_name, "simulations": args.simulations, "decks": deck_options, "models": model_options}
     try:

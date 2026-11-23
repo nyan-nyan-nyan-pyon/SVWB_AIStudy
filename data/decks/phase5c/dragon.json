@@ -1,0 +1,69 @@
+{
+  "name": "ドラゴン",
+  "class": "ドラゴン",
+  "class_id": 4,
+  "format_version": 1,
+  "source_hash": "1.4.e3ls.e3ls.e3ls.e4Gg.e4Gg.e4Gg.ebxM.fDE-.fDE-.fDXk.fDXk.fDXk.fNIk.fNIk.flAs.flAs.flAs.flD-.flD-.flD-.flQU.flQU.flQU.flg6.flg6.flg6.fljE.fljE.fljE.flvk.flvk.flvk.g7bM.g7bM.g7bM.g7r8.g7r8.g8KO.g8KO.g8KO",
+  "cards": [
+    {
+      "card_id": 10501110,
+      "copies": 3
+    },
+    {
+      "card_id": 10503210,
+      "copies": 3
+    },
+    {
+      "card_id": 10641110,
+      "copies": 1
+    },
+    {
+      "card_id": 10802110,
+      "copies": 2
+    },
+    {
+      "card_id": 10803310,
+      "copies": 3
+    },
+    {
+      "card_id": 10843310,
+      "copies": 2
+    },
+    {
+      "card_id": 10941110,
+      "copies": 3
+    },
+    {
+      "card_id": 10941310,
+      "copies": 3
+    },
+    {
+      "card_id": 10942110,
+      "copies": 3
+    },
+    {
+      "card_id": 10943110,
+      "copies": 3
+    },
+    {
+      "card_id": 10943310,
+      "copies": 3
+    },
+    {
+      "card_id": 10944110,
+      "copies": 3
+    },
+    {
+      "card_id": 11041110,
+      "copies": 3
+    },
+    {
+      "card_id": 11042120,
+      "copies": 2
+    },
+    {
+      "card_id": 11044120,
+      "copies": 3
+    }
+  ]
+}
