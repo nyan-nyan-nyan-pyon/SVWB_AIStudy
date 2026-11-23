@@ -538,7 +538,7 @@ private:
             candidates.emplace_back(std::move(candidate));
         }
         return {{"actor", seat_name(state_->turn_player)}, {"turn", state_->turn_number}, {"revision", revision_},
-                {"total_visits", decision.visits}, {"selected_rank", selection_rank},
+                {"total_visits", decision.visits}, {"forced_lethal", decision.forced}, {"selected_rank", selection_rank},
                 {"value", selected->value ? Json(static_cast<double>(*selected->value)) : Json{}},
                 {"actions", std::move(actions)}, {"candidates", std::move(candidates)}};
     }

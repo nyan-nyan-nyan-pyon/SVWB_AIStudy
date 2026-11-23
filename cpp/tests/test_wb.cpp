@@ -1,4 +1,5 @@
 #include "wb_cards.hpp"
+#include "wb_search.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -2770,6 +2771,163 @@ int stress_with_neutral(std::span<const CardId> faction, std::uint64_t seed, std
     return stress_rotation(pool, 5'000, seed, label);
 }
 
+void actor_audit() {
+    const auto sammy = official(10832110);
+    auto witch = kMirrorDeck;
+    witch[0] = sammy;
+    const MatchupFeatures mirror(kMirrorDeck, kMirrorDeck);
+    const MatchupFeatures custom(witch, kMirrorDeck);
+    const auto model = svwb::Mlp::random(12);
+    for (const auto* matchup : {&mirror, &custom}) {
+        auto initial = new_game(matchup->legacy_mirror() ? kMirrorDeck : witch, kMirrorDeck, 2026);
+        apply_legal_action(initial, {Mulligan});
+        apply_legal_action(initial, {Mulligan});
+        for (int seat = 0; seat < svwb::kPlayers; ++seat) {
+            auto state = initial;
+            state.turn_player = static_cast<std::uint8_t>(seat);
+            const auto features = extract_features(state, matchup);
+            auto hidden = state;
+            auto& opposing = hidden.players[1 - seat];
+            std::fill_n(opposing.hand.begin(), opposing.hand_count, sammy);
+            opposing.hand_modifiers[0].spellboost = 8;
+            opposing.hand_modifiers[1].cost = -2;
+            for (auto& player : hidden.players) {
+                // Audit both unknown order and unknown remaining identities, keeping public counts fixed.
+                std::reverse(player.deck.begin() + player.deck_idx, player.deck.begin() + player.deck_end);
+                player.deck[player.deck_idx] = sammy;
+                player.deck_modifiers[player.deck_idx].attack = 5;
+            }
+            ++hidden.rng_state;
+            CHECK(extract_features(hidden, matchup) == features);
+            --hidden.players[1 - seat].hand_count;
+            CHECK(extract_features(hidden, matchup) != features);
+            auto visible = state;
+            visible.players[seat].hand[0] = visible.players[seat].hand[0] == kLilium ? kTrainer : kLilium;
+            CHECK(extract_features(visible, matchup) != features);
+
+            // Both paths share the seed, model, state, and search settings. Logging must not change any feature.
+            std::mt19937 training_rng(129);
+            std::mt19937 inference_rng(129);
+            Search training(model, model, training_rng, {4, false, true}, matchup);
+            Search inference(model, model, inference_rng, {4, false, true}, matchup);
+            const auto logged = training.choose(state, true);
+            const auto inferred = inference.choose(state, false);
+            CHECK(logged.next == inferred.next && logged.visits == inferred.visits);
+            CHECK(logged.ranked.size() == logged.policy.size() && logged.ranked.size() == inferred.ranked.size());
+            for (std::size_t i = 0; i < logged.ranked.size(); ++i) {
+                const auto& candidate = inferred.ranked[i];
+                CHECK(candidate.actions == logged.ranked[i].actions && candidate.selected == logged.ranked[i].selected);
+                auto end_of_moves = state;
+                for (const auto action : candidate.actions) {
+                    if (action.type == EndTurn) break;
+                    CHECK(apply_action(end_of_moves, action));
+                }
+                const auto inference_features = extract_features(end_of_moves, matchup);
+                const auto probability = static_cast<float>(candidate.visits) / inferred.visits;
+                CHECK(std::any_of(logged.policy.begin(), logged.policy.end(), [&](const auto& row) {
+                    return row.features == inference_features && row.probability == probability;
+                }));
+            }
+        }
+    }
+    std::cout << "PASS actor audit: both seats, mirror and custom layouts; inference and replay features identical\n";
+}
+
+void search_canonicalization() {
+    Scenario copies;
+    copies.hand({kTestimony, kTrainer, kTestimony, kTestimony});
+    copies.player().hand_modifiers[3].spellboost = 1;
+    const auto raw = legal_actions(copies.state);
+    const auto canonical = legal_actions(copies.state, {}, PlayCopies::Canonical);
+    const auto testimony_count = [](const ActionList& actions) {
+        return std::count_if(actions.begin(), actions.end(), [](Action action) {
+            return action.type == Play && action.src != 1;
+        });
+    };
+    CHECK(testimony_count(raw) == 6 && testimony_count(canonical) == 4);
+    CHECK(std::none_of(canonical.begin(), canonical.end(), [](Action action) {
+        return action.type == Play && action.src == 2;
+    }));
+    CHECK(std::any_of(canonical.begin(), canonical.end(), [](Action action) {
+        return action.type == Play && action.src == 3;
+    }));
+
+    Scenario commute;
+    commute.place(kTrainer);
+    commute.place(kLilium);
+    commute.player().manual_evolved = true;
+    const Action left{Attack, 0, kEnemyLeader};
+    const Action right{Attack, 1, kEnemyLeader};
+    auto left_then_right = commute.state;
+    auto right_then_left = commute.state;
+    for (const auto action : {left, right}) CHECK(apply_action(left_then_right, action));
+    for (const auto action : {right, left}) CHECK(apply_action(right_then_left, action));
+    CHECK(left_then_right == right_then_left);
+    const MatchupFeatures mirror(kMirrorDeck, kMirrorDeck);
+    const MatchupFeatures general(kProvisionalMirror, kMirrorDeck);
+    auto model = svwb::Mlp::random(5);
+    for (const auto* matchup : {&mirror, &general}) {
+        std::mt19937 rng(5);
+        Search search(model, model, rng, {1, false, true}, matchup);
+        const auto result = search.choose(commute.state, true);
+        CHECK(result.policy.size() == 4 && result.ranked.size() == 4);
+        CHECK(std::count_if(result.ranked.begin(), result.ranked.end(), [](const auto& plan) {
+            return plan.actions.size() == 3;
+        }) == 1);
+    }
+    std::cout << "PASS canonicalization: identical-copy play branches 6->4, commuting turn paths 5->4\n";
+}
+
+void search_forced_lethal() {
+    const MatchupFeatures mirror(kMirrorDeck, kMirrorDeck);
+    const MatchupFeatures general(kProvisionalMirror, kMirrorDeck);
+    for (std::uint32_t seed = 0; seed < 16; ++seed) {
+        const auto model = svwb::Mlp::random(seed);
+        std::mt19937 rng(seed);
+        Search search(model, model, rng, {64, seed % 2 == 0, true}, seed < 8 ? &mirror : &general);
+        Scenario s;
+        const int actor = seed % 2;
+        s.state.turn_player = static_cast<std::uint8_t>(actor);
+        s.player(actor).manual_evolved = true;
+        s.player(1 - actor).leader_hp = 5;
+        s.place(kTrainer, actor);
+        s.place(kLilium, actor);
+        const auto decision = search.choose(s.state, true);
+        CHECK(decision.forced && decision.visits == 0 && decision.policy.size() == 1);
+        CHECK(decision.policy[0].probability == 1.0F && decision.ranked.size() == 1 &&
+              decision.ranked[0].selected && decision.ranked[0].actions.size() == 2);
+        for (const auto action : decision.ranked[0].actions) CHECK(apply_action(s.state, action));
+        CHECK(s.state == decision.next && s.player(1 - actor).leader_hp <= 0 &&
+              s.player(actor).leader_hp > 0 && outcome_value(s.state.outcome, actor) == 1.0F);
+    }
+    const auto model = svwb::Mlp::random(1);
+    std::mt19937 rng(1);
+    Search search(model, model, rng, {4, false, true}, &general);
+    {
+        Scenario s;
+        s.hand({official(10031310)});
+        s.player().deck[s.player().deck_idx] = kHolyFalcon;
+        s.player(1).leader_hp = 2;
+        auto draw = s.state;
+        CHECK(!apply_observed_action(draw, {Play, 0}) && draw.players[0].hand[0] == kHolyFalcon);
+        CHECK(!search.choose(s.state, false).forced);
+    }
+    {
+        Scenario s;
+        s.hand({official(10852120)});
+        s.player().leader_hp = s.player(1).leader_hp = 1;
+        auto trade = s.state;
+        CHECK(apply_observed_action(trade, {Play, 0}) && trade.outcome == Outcome::SecondWins);
+        CHECK(!search.choose(s.state, false).forced);
+    }
+    {
+        Scenario s;
+        s.player(1).deck_idx = s.player(1).deck_end;
+        CHECK(!search.choose(s.state, false).forced);
+    }
+    std::cout << "PASS FORCE: 16/16 random weight sets; unknown draws, mutual lethal and deck-out excluded\n";
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -2801,8 +2959,22 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--rotation-registry") return verify_rotation_registry();
     if (argc == 2 && std::string_view(argv[1]) == "--full-rotation-stress")
         return stress_rotation(all_rotation(), 10'000, 0x35364234ULL, "full_rotation_mirror");
+    if (argc == 2) {
+        const std::string_view mode(argv[1]);
+        try {
+            if (mode == "--actor-audit") actor_audit();
+            else if (mode == "--canonicalization") search_canonicalization();
+            else if (mode == "--forced-lethal") search_forced_lethal();
+            else throw std::invalid_argument("Unknown test_wb mode");
+            return 0;
+        } catch (const std::exception& error) {
+            std::cerr << error.what() << '\n';
+            return 1;
+        }
+    }
     std::cerr << "Usage: test_wb [--stress|--rotation-unit|--rotation-stress|--elf-royal-unit|--elf-stress|--royal-stress"
                  "|--dragon-nightmare-unit|--dragon-stress|--nightmare-stress|--witch-nemesis-unit|--witch-stress"
-                 "|--nemesis-stress|--rotation-registry|--full-rotation-stress]\n";
+                 "|--nemesis-stress|--rotation-registry|--full-rotation-stress|--actor-audit|--canonicalization"
+                 "|--forced-lethal]\n";
     return 2;
 }

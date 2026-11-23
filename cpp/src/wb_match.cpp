@@ -255,6 +255,7 @@ void write_turn(std::ostream& out, const GameState& state, const Decision& decis
     }
     out << "    {\n      \"round\":" << static_cast<int>(state.turn_number)
         << ",\"seat\":" << 1 + state.turn_player << ",\"pp_before\":" << state.players[state.turn_player].available_pp()
+        << ",\"forced_lethal\":" << (decision.forced ? "true" : "false")
         << ",\"total_visits\":" << decision.visits << ",\"selected_rank\":";
     const auto selected = std::find_if(decision.ranked.begin(), decision.ranked.end(),
                                        [](const auto& candidate) { return candidate.selected; });
@@ -272,7 +273,8 @@ void write_turn(std::ostream& out, const GameState& state, const Decision& decis
     for (std::size_t i = 0; i < std::min(top, decision.ranked.size()); ++i) {
         const auto& candidate = decision.ranked[i];
         out << (i ? ",\n" : "\n") << "        {\"rank\":" << i + 1 << ",\"visits\":" << candidate.visits
-            << ",\"visit_share\":" << static_cast<double>(candidate.visits) / decision.visits << ",\"value\":";
+            << ",\"visit_share\":" << (decision.visits ? static_cast<double>(candidate.visits) / decision.visits : 0.0)
+            << ",\"value\":";
         if (candidate.value) {
             out << *candidate.value;
         } else {
@@ -437,6 +439,8 @@ void run_match(const MatchOptions& options) {
     const auto a = options.weights.empty() ? Mlp::random(options.seed) : Mlp::load(options.weights);
     const auto b = !options.opponent_weights.empty() ? Mlp::load(options.opponent_weights)
                  : options.opponent_seed ? Mlp::random(*options.opponent_seed) : a;
+    std::optional<Mlp> snapshot;
+    if (options.snapshot.basis_points) snapshot = Mlp::load(options.snapshot.weights);
     std::optional<TrainingLogs> logs;
     if (!options.log_dir.empty()) {
         logs.emplace(options.log_dir);
@@ -446,6 +450,7 @@ void run_match(const MatchOptions& options) {
     std::array<std::optional<std::uint64_t>, kPlayers> representatives;
     std::optional<Outcome> explicit_game;
     Totals totals;
+    std::uint64_t snapshot_games = 0;
     std::mutex mutex;
     std::exception_ptr failure;
     std::atomic<bool> stop = false;
@@ -459,7 +464,8 @@ void run_match(const MatchOptions& options) {
                 if (options.games && id >= options.games) {
                     break;
                 }
-                const auto game = play(options, matchup, a, b, id, false);
+                const bool against_snapshot = snapshot && options.snapshot.plays(id);
+                const auto game = play(options, matchup, a, against_snapshot ? *snapshot : b, id, false);
                 const auto a_seat = static_cast<int>(id % 2);
                 const std::scoped_lock lock(mutex);
                 if (logs) {
@@ -478,6 +484,7 @@ void run_match(const MatchOptions& options) {
                     }
                 }
                 totals.observe(game, a_seat);
+                snapshot_games += against_snapshot;
             }
         } catch (...) {
             const std::scoped_lock lock(mutex);
@@ -504,17 +511,15 @@ void run_match(const MatchOptions& options) {
     }
     if (logs) {
         logs->finish();
-        if (!matchup.legacy_mirror()) {
-            auto out = output_file(options.log_dir / "matchup_features.json");
-            out << "{\"schema\":\"wb-matchup-v1\",\"input_dim\":256,\"cards\":[";
-            bool comma = false;
-            for (const auto card : matchup.cards()) {
-                out << (comma ? "," : "") << "{\"local_id\":" << matchup.local_id(card)
-                    << ",\"official_id\":" << find_card(card)->official_id << ",\"card_id\":" << card << '}';
-                comma = true;
-            }
-            out << "]}\n";
+        auto out = output_file(options.log_dir / "matchup_features.json");
+        out << "{\"schema\":\"" << feature_schema(matchup) << "\",\"input_dim\":256,\"cards\":[";
+        bool comma = false;
+        for (const auto card : matchup.cards()) {
+            out << (comma ? "," : "") << "{\"local_id\":" << matchup.local_id(card)
+                << ",\"official_id\":" << find_card(card)->official_id << ",\"card_id\":" << card << '}';
+            comma = true;
         }
+        out << "]}\n";
     }
     const double elapsed = std::chrono::duration<double>(Clock::now() - start).count();
     if (analyzing) {
@@ -523,7 +528,8 @@ void run_match(const MatchOptions& options) {
         table.write(csv);
         csv.close();
         const auto trace = [&](std::uint64_t id, Outcome expected, std::string_view name) {
-            const auto game = play(options, matchup, a, b, id, true);
+            const bool against_snapshot = snapshot && options.snapshot.plays(id);
+            const auto game = play(options, matchup, a, against_snapshot ? *snapshot : b, id, true);
             if (game.outcome != expected) {
                 throw std::logic_error("Replayed trace winner differs from the match result");
             }
@@ -549,7 +555,7 @@ void run_match(const MatchOptions& options) {
     std::cout << "games=" << totals.games << " threads=" << threads << " turns=" << totals.turns
               << " seed=" << options.seed << " simulations=" << options.search.simulations
               << " mode=" << (options.evaluate ? "evaluate" : "selfplay") << " rules=wb"
-              << " feature_schema=" << (matchup.legacy_mirror() ? "wb-mirror-v1" : "wb-matchup-v1")
+              << " feature_schema=" << feature_schema(matchup)
               << " local_cards=" << matchup.cards().size() << '\n'
               << "A_first=" << totals.a_first << " A_second=" << totals.games - totals.a_first
               << " A_wins=" << totals.a_wins << " B_wins=" << totals.b_wins << " draws=" << totals.both_lose
@@ -564,6 +570,7 @@ void run_match(const MatchOptions& options) {
         std::cout << "value_samples=" << totals.turns << " policy_turns=" << totals.turns
                   << " policy_samples=" << totals.policy_samples << '\n';
     }
+    if (snapshot) std::cout << "snapshot_games=" << snapshot_games << '\n';
 }
 
 } // namespace svwb::wb

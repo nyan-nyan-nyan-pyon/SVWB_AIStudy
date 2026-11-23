@@ -39,6 +39,7 @@ struct Options {
     std::filesystem::path deck_b_file;
     std::filesystem::path weights;
     std::filesystem::path opponent_weights;
+    SnapshotOpponent snapshot;
     std::filesystem::path log_dir;
     std::filesystem::path analysis_dir;
     std::optional<std::uint64_t> trace_game;
@@ -53,6 +54,7 @@ void usage(std::ostream& out) {
     out << "Usage: svwb_ai [--games N] [--seconds N] [--threads N] [--seed N]\n"
            "               [--deck-a A|B|JSON] [--deck-b A|B|JSON] [--weights FILE]\n"
            "               [--opponent-weights FILE | --opponent-seed N]\n"
+           "               [--snapshot-weights FILE --snapshot-bps 1..10000]\n"
            "               [--simulations N] [--no-exploration] [--log-dir DIR]\n"
            "               [--evaluate [--random-opponent]]\n"
            "               [--rules legacy|wb]\n"
@@ -135,6 +137,10 @@ Options parse_options(int argc, char** argv) {
             options.weights = utf8_path(value);
         } else if (flag == "--opponent-weights") {
             options.opponent_weights = utf8_path(value);
+        } else if (flag == "--snapshot-weights") {
+            options.snapshot.weights = utf8_path(value);
+        } else if (flag == "--snapshot-bps") {
+            options.snapshot.basis_points = number(value, flag, 1U, 10'000U);
         } else if (flag == "--log-dir") {
             options.log_dir = utf8_path(value);
         } else if (flag == "--analysis-dir") {
@@ -159,6 +165,10 @@ Options parse_options(int argc, char** argv) {
     }
     if (options.opponent_seed && !options.opponent_weights.empty()) {
         throw std::invalid_argument("--opponent-seed and --opponent-weights are mutually exclusive");
+    }
+    if (options.snapshot.weights.empty() != (options.snapshot.basis_points == 0) ||
+        (options.snapshot.basis_points && (options.evaluate || options.opponent_seed || !options.opponent_weights.empty()))) {
+        throw std::invalid_argument("Use --snapshot-weights and --snapshot-bps together for self-play with one current model");
     }
     if (options.random_opponent && (!options.evaluate || options.opponent_seed ||
                                     !options.opponent_weights.empty() || !options.log_dir.empty())) {
@@ -277,6 +287,7 @@ struct MatchStats {
     std::uint64_t a_wins = 0;
     std::uint64_t b_wins = 0;
     std::uint64_t draws = 0;
+    std::uint64_t snapshot_games = 0;
     double game_seconds = 0.0;
 };
 
@@ -284,6 +295,8 @@ void run(const Options& options) {
     const auto model_a = options.weights.empty() ? Mlp::random(options.seed) : Mlp::load(options.weights);
     const auto model_b = !options.opponent_weights.empty() ? Mlp::load(options.opponent_weights)
                        : options.opponent_seed ? Mlp::random(*options.opponent_seed) : model_a;
+    std::optional<Mlp> snapshot;
+    if (options.snapshot.basis_points) snapshot = Mlp::load(options.snapshot.weights);
     std::optional<TrainingLogs> logs;
     if (!options.log_dir.empty()) {
         logs.emplace(options.log_dir);
@@ -311,7 +324,8 @@ void run(const Options& options) {
                 if (options.games != 0 && game_id >= options.games) {
                     break;
                 }
-                auto result = play_game(options, model_a, model_b, game_id, deck_labels);
+                const bool against_snapshot = snapshot && options.snapshot.plays(game_id);
+                auto result = play_game(options, model_a, against_snapshot ? *snapshot : model_b, game_id, deck_labels);
                 const std::scoped_lock lock(output_lock);
                 if (logs) {
                     logs->append(result.log);
@@ -324,6 +338,7 @@ void run(const Options& options) {
                     }
                 }
                 ++stats.games;
+                stats.snapshot_games += against_snapshot;
                 stats.turns += result.turns;
                 stats.policy_samples += result.log.policies.size();
                 stats.a_first += a_seat == 0;
@@ -388,6 +403,7 @@ void run(const Options& options) {
         std::cout << "value_samples=" << stats.turns << " policy_turns=" << stats.turns
                   << " policy_samples=" << stats.policy_samples << '\n';
     }
+    if (snapshot) std::cout << "snapshot_games=" << stats.snapshot_games << '\n';
 }
 
 } // namespace
@@ -405,7 +421,8 @@ int run_application(int argc, char** argv) {
                 options.analysis_dir, options.trace_game, options.trace_top.value_or(5),
                 options.evaluate, options.random_opponent, options.search,
                 options.deck_a_file.empty() ? svwb::wb::kMirrorDeck : svwb::wb::read_deck(options.deck_a_file),
-                options.deck_b_file.empty() ? svwb::wb::kMirrorDeck : svwb::wb::read_deck(options.deck_b_file)});
+                options.deck_b_file.empty() ? svwb::wb::kMirrorDeck : svwb::wb::read_deck(options.deck_b_file),
+                options.snapshot});
         } else {
             run(options);
         }

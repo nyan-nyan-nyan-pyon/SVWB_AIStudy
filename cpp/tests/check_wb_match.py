@@ -58,10 +58,13 @@ def check_exports(path):
         assert turn["selected_actions"]
         if turn["candidates"]:
             visits = turn["total_visits"]
-            assert visits >= 4
             assert sum(item["visits"] for item in turn["candidates"]) == visits
             chosen = turn["candidates"][turn["selected_rank"] - 1]
             assert chosen["actions"] == turn["selected_actions"]
+            if turn["forced_lethal"]:
+                assert visits == 0 and len(turn["candidates"]) == 1 and chosen["value"] == 1
+            else:
+                assert visits >= 4
         else:
             assert turn["selected_rank"] is None
     with (path / "opening_win_rates.csv").open(encoding="utf-8", newline="") as stream:
@@ -85,7 +88,7 @@ def check_custom_decks(command, root):
         logs = root / a.stem
         result = subprocess.run([*command, "--deck-a", a, "--deck-b", b, "--log-dir", logs],
                                 check=True, capture_output=True, encoding="utf-8", timeout=30)
-        assert "feature_schema=wb-matchup-v1" in result.stdout
+        assert "feature_schema=wb-matchup-v2" in result.stdout
         mapping = json.loads((logs / "matchup_features.json").read_text(encoding="utf-8"))
         assert mapping["input_dim"] == 256
         cards = mapping["cards"]
@@ -119,7 +122,7 @@ def check_elf_royal_decks(command, root):
         [*command, "--deck-a", root / "elf.json", "--deck-b", root / "royal.json", "--log-dir", logs],
         check=True, capture_output=True, encoding="utf-8", timeout=30,
     )
-    assert "games=4" in result.stdout and "feature_schema=wb-matchup-v1" in result.stdout
+    assert "games=4" in result.stdout and "feature_schema=wb-matchup-v2" in result.stdout
     mapping = json.loads((logs / "matchup_features.json").read_text(encoding="utf-8"))
     assert {10614120, 10624120, 10614122, 10624122, 90011110, 90021120, 90014330, 90024320, 90021320} <= {
         card["official_id"] for card in mapping["cards"]
@@ -170,6 +173,10 @@ def main():
                    "--simulations", "4", "--seed", "8787", "--weights", weights]
         subprocess.run([*command, "--log-dir", root], check=True, capture_output=True, timeout=30)
         check_replay(root)
+        mirror_layout = json.loads((root / "matchup_features.json").read_text(encoding="utf-8"))
+        assert mirror_layout["schema"] == "wb-mirror-v2"
+        for row in SAMPLE.iter_unpack((root / "val_log.bin").read_bytes()):
+            assert not any(row[194:230]) and not any(row[113:115]) and not any(row[233:235])
         result = subprocess.run(
             [*command, "--evaluate", "--random-opponent", "--analysis-dir", root, "--trace-top", "18",
              "--trace-game", "2"],
@@ -180,6 +187,12 @@ def main():
         check_custom_decks(command, root)
         check_elf_royal_decks(command, root)
         check_witch_nemesis_decks(command, root)
+        snapshot = subprocess.run(
+            [*command, "--games", "10", "--snapshot-weights", weights, "--snapshot-bps", "2000"],
+            check=True, capture_output=True, encoding="utf-8", timeout=30,
+        )
+        assert re.search(r"^games=10 .*mode=selfplay", snapshot.stdout)
+        assert "snapshot_games=2" in snapshot.stdout and "A_first=5 A_second=5" in snapshot.stdout
     print("PASS WB logs, balanced exports and seat-invariant local IDs")
 
 

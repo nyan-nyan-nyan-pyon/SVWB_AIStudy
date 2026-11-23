@@ -529,7 +529,8 @@ const std::array<Effect, kEffectSlots>& script(const Ability& ability) {
 
 class Resolver {
 public:
-    Resolver(GameState& state, const RuleConfig& rules) : state_(state), rules_(rules) {}
+    Resolver(GameState& state, const RuleConfig& rules, bool* certain = nullptr)
+        : state_(state), rules_(rules), certain_(certain), observer_(state.turn_player) {}
 
     void play(Action action);
     void manual_evolve(Action action);
@@ -541,6 +542,13 @@ public:
     void immediate(int owner, std::span<const Effect> effects, EntityId source, EntityId target);
 
 private:
+    void uncertain() const {
+        if (certain_) *certain_ = false;
+    }
+    int pick_index(int count) {
+        if (count > 1) uncertain();
+        return random_index(state_, count);
+    }
     void enqueue(Ability ability);
     void board_ability(Ref ref, Trigger trigger, EntityId chosen = 0, int mode = 0, std::uint16_t selection = 0,
                        int effective_cost = 0, int enhanced = 0);
@@ -578,6 +586,8 @@ private:
 
     GameState& state_;
     const RuleConfig& rules_;
+    bool* certain_;
+    int observer_;
     std::vector<Ability> waiting_;
     std::vector<Ability> triggered_;
     Ref super_attacker_{};
@@ -890,19 +900,27 @@ void Resolver::run_steps(const Ability& ability, std::span<const Effect> effects
     }
     auto& player = state_.players[ability.source.seat];
     bool paid = false;
+    const auto conditions = [&](const Effect& step) {
+        if (step.condition == Condition::NoDeckDuplicates || step.condition == Condition::HasDeckDuplicates ||
+            (ability.source.seat != observer_ && (step.operation == Operation::DiscardEvidence ||
+             step.condition == Condition::HandSpells || step.condition == Condition::CostMultiplicity))) {
+            uncertain();
+        }
+        return condition_met(state_, step, ability, paid, rules_);
+    };
     const bool limited = ability.origin == Origin::Board && definition(ability.card).once_per_own_turn &&
         (ability.trigger == OnBuffed || ability.trigger == OnOtherPlay);
     if (limited) {
         auto* source = find(state_, ability.source);
         if (!source || ability.source.seat != state_.turn_player || source->last_trigger_ply == ply(state_) ||
             std::none_of(effects.begin(), effects.end(), [&](const auto& step) {
-                return step.trigger == ability.trigger && condition_met(state_, step, ability, false, rules_);
+                return step.trigger == ability.trigger && conditions(step);
             })) return;
         source->last_trigger_ply = static_cast<std::uint8_t>(ply(state_));
     }
     for (std::size_t i = 0; i < effects.size() && state_.outcome == Outcome::Ongoing; ++i) {
         const auto& step = effects[i];
-        if (step.trigger == ability.trigger && takes_mode(step, ability.mode) && condition_met(state_, step, ability, paid, rules_)) {
+        if (step.trigger == ability.trigger && takes_mode(step, ability.mode) && conditions(step)) {
             if (step.operation == Operation::Necromancy) {
                 paid = step.amount >= 0 && player.shadows >= step.amount;
                 if (!paid) continue;
@@ -1048,7 +1066,7 @@ EntityId Resolver::random_enemy(int owner) {
             candidates[count++] = player.board[i].creation_order;
         }
     }
-    return count > 0 ? candidates[random_index(state_, count)] : 0;
+    return count > 0 ? candidates[pick_index(count)] : 0;
 }
 
 void Resolver::grant_crest(int seat, CrestId id) {
@@ -1110,7 +1128,7 @@ CardId Resolver::past_card(int seat, int limit, bool highest, bool only_amulets,
         consider(player.other_counters[i].id, player.other_counters[i].destroyed);
     }
     if (total == 0) return 0;
-    int pick = random_index(state_, total);
+    int pick = pick_index(total);
     for (int i = 0; i < count; ++i) {
         const auto [id, weight] = candidates[i];
         if (pick < weight) {
@@ -1184,6 +1202,7 @@ void Resolver::keep_drawn(int seat, CardId card, CardModifiers modifiers, int di
 
 int Resolver::draw_cards(int seat, int amount, DeckFilter filter, int discount) {
     auto& player = state_.players[seat];
+    if (amount > 0 && player.deck_remaining() > 0) uncertain();
     int last_cost = -1;
     for (int i = 0; i < amount && state_.outcome == Outcome::Ongoing; ++i) {
         int slot = player.deck_idx;
@@ -1194,7 +1213,7 @@ int Resolver::draw_cards(int seat, int amount, DeckFilter filter, int discount) 
                 if (deck_filter(definition(player.deck[index]), filter, player.deck_modifiers[index])) candidates[count++] = index;
             }
             if (count == 0) break;
-            slot = candidates[random_index(state_, count)];
+            slot = candidates[pick_index(count)];
         } else if (player.deck_remaining() == 0) {
             lose(state_, seat, EndReason::EmptyDeck);
             break;
@@ -1207,6 +1226,7 @@ int Resolver::draw_cards(int seat, int amount, DeckFilter filter, int discount) 
 }
 
 void Resolver::discard(int seat, int slot) {
+    if (seat != observer_) uncertain();
     auto& player = state_.players[seat];
     const auto id = player.hand[slot];
     Ability ability{OnDiscard, Origin::Spell, {seat}, id};
@@ -1371,7 +1391,7 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
         }
         const int count = random_group ? std::min(picks, target_count) : target_count;
         for (int i = 0; i < count; ++i) {
-            if (random_group) std::swap(targets[i], targets[i + random_index(state_, target_count - i)]);
+            if (random_group) std::swap(targets[i], targets[i + pick_index(target_count - i)]);
             auto chosen = ability;
             chosen.chosen = targets[i].order;
             effect(chosen, single, 0);
@@ -1613,6 +1633,7 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
         }
         break;
     case DrawNamed:
+        if (player.deck_remaining() > 0) uncertain();
         for (int i = player.deck_idx; i < player.deck_end; ++i) {
             if (player.deck[i] != step.card) continue;
             auto [card, modifiers] = take_deck_card(player, i);
@@ -1648,7 +1669,7 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
         std::array<int, kHandLimit> slots{};
         int count = 0;
         for (int i = 0; i < player.hand_count; ++i) if (definition(player.hand[i]).clue) slots[count++] = i;
-        if (count > 0) discard(owner, slots[random_index(state_, count)]);
+        if (count > 0) discard(owner, slots[pick_index(count)]);
         break;
     }
     case AddShadows:
@@ -1769,7 +1790,7 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
             discard(owner, hand_slot);
         } else if (step.target == Target::None) {
             for (int count = 0; count < step.amount && player.hand_count > 0; ++count) {
-                discard(owner, random_index(state_, player.hand_count));
+                discard(owner, pick_index(player.hand_count));
             }
         }
         break;
@@ -1845,6 +1866,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
     const int enemy = 1 - owner;
     auto& player = state_.players[owner];
     const auto& opponent = state_.players[enemy];
+    if (owner != observer_ && player.hand_count > 0) uncertain();
     const auto primitive = [&](Operation operation, Target destination, int amount = 0, CardId card = 0) {
         effect(ability, {ability.trigger, operation, destination, amount, card},
                destination == Target::RandomEnemyFollower && rules_.random_targets == RandomTargets::AtAbilityStart
@@ -1887,7 +1909,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
                 candidates[count++] = i;
             }
         }
-        erase_hand(player, candidates[random_index(state_, count)]);
+        erase_hand(player, candidates[pick_index(count)]);
         evolve(target, Evolution::Normal, false);
         break;
     }
@@ -1920,7 +1942,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
     case CardHandler::DrawCrest:
         if (ability.event_cost >= 1 && ability.event_cost <= 6) {
             enter(ability.event_cost % 2 ? owner : enemy,
-                  random_index(state_, 2) == 0 ? step.card : kHolyFalcon);
+                  pick_index(2) == 0 ? step.card : kHolyFalcon);
         }
         break;
     case CardHandler::CopyBanish:
@@ -1930,7 +1952,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
         std::array<std::uint16_t, 6> options{FLAG_STORM, kBane, kIntimidate, kDrain, kAura, kBarrier};
         if (auto* object = find(state_, target)) {
             for (int i = 0; i < 3; ++i) {
-                std::swap(options[i], options[i + random_index(state_, static_cast<int>(options.size()) - i)]);
+                std::swap(options[i], options[i + pick_index(static_cast<int>(options.size()) - i)]);
                 object->abilities |= options[i];
                 object->modifiers.abilities |= options[i];
             }
@@ -1945,18 +1967,21 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
         }
         break;
     case CardHandler::TopHandCosts:
+        if (opponent.hand_count > 0) uncertain();
         if (hand_cost_sum(player) > hand_cost_sum(opponent)) primitive(Operation::Destroy, Target::AllEnemyFollowers);
         break;
     case CardHandler::ReplaceHandFromEnemyDeck:
         if (hand_slot >= 0 && hand_slot < player.hand_count && opponent.deck_remaining() > 0) {
-            const int slot = opponent.deck_idx + random_index(state_, opponent.deck_remaining());
+            uncertain();
+            const int slot = opponent.deck_idx + pick_index(opponent.deck_remaining());
             player.hand[hand_slot] = opponent.deck[slot];
             player.hand_modifiers[hand_slot] = opponent.deck_modifiers[slot];
         }
         break;
     case CardHandler::CopyEnemyHand:
         if (opponent.hand_count > 0) {
-            const int slot = random_index(state_, opponent.hand_count);
+            uncertain();
+            const int slot = pick_index(opponent.hand_count);
             auto modifiers = opponent.hand_modifiers[slot];
             modifiers.cost = static_cast<std::int8_t>(std::max(-127, modifiers.cost - step.amount));
             add_card(player, opponent.hand[slot], modifiers);
@@ -2000,6 +2025,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
         break;
     case CardHandler::SummonFromDeckEvolved:
         if (player.board_count < kBoardLimit) {
+            if (player.deck_remaining() > 0) uncertain();
             std::array<int, kDeckCapacity> slots{};
             int count = 0;
             for (int i = player.deck_idx; i < player.deck_end; ++i) {
@@ -2009,7 +2035,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
                 }
             }
             if (count > 0) {
-                const auto [card, modifiers] = take_deck_card(player, slots[random_index(state_, count)]);
+                const auto [card, modifiers] = take_deck_card(player, slots[pick_index(count)]);
                 evolve(enter(owner, card, modifiers), Evolution::Super, false);
             }
         }
@@ -2042,7 +2068,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
         break;
     case CardHandler::ReturnRandomHand:
         for (int i = 0; i < step.amount && player.hand_count > 0; ++i) {
-            const int slot = random_index(state_, player.hand_count);
+            const int slot = pick_index(player.hand_count);
             return_to_deck(state_, player, player.hand[slot], player.hand_modifiers[slot]);
             erase_hand(player, slot);
         }
@@ -2054,14 +2080,16 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
     case CardHandler::CopyEnemyDeck: {
         std::array<int, kDeckCapacity> slots{};
         const int remaining = opponent.deck_remaining();
+        if (remaining > 0) uncertain();
         for (int i = 0; i < remaining; ++i) slots[i] = opponent.deck_idx + i;
         for (int i = 0; i < std::min(step.amount, remaining); ++i) {
-            std::swap(slots[i], slots[i + random_index(state_, remaining - i)]);
+            std::swap(slots[i], slots[i + pick_index(remaining - i)]);
             add_card(player, opponent.deck[slots[i]], opponent.deck_modifiers[slots[i]]);
         }
         break;
     }
     case CardHandler::SummonDeckDistinct: {
+        if (player.deck_remaining() > 0) uncertain();
         std::array<CardId, kBoardLimit> selected{};
         for (int i = 0; i < step.amount && player.board_count < kBoardLimit; ++i) {
             std::array<int, kDeckCapacity> slots{};
@@ -2075,7 +2103,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
                 }
             }
             if (count == 0) break;
-            const auto [card, modifiers] = take_deck_card(player, slots[random_index(state_, count)]);
+            const auto [card, modifiers] = take_deck_card(player, slots[pick_index(count)]);
             selected[i] = card;
             enter(owner, card, modifiers);
         }
@@ -2089,7 +2117,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
         }
         const int difference = count - (player.board_count - amulets(player));
         for (int i = 0; i < difference; ++i) {
-            std::swap(targets[i], targets[i + random_index(state_, count - i)]);
+            std::swap(targets[i], targets[i + pick_index(count - i)]);
             destroy(targets[i], source, true);
         }
         break;
@@ -2151,6 +2179,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
         }
         break;
     case CardHandler::ExileOdds: {
+        if (player.deck_remaining() > 0) uncertain();
         int retained = player.deck_idx;
         int removed = 0;
         for (int i = player.deck_idx; i < player.deck_end; ++i) {
@@ -2190,7 +2219,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
             if (has_last_words(object)) candidates[count++] = object.creation_order;
         }
         if (count > 0) {
-            destroy({owner, candidates[random_index(state_, count)]}, source, true);
+            destroy({owner, candidates[pick_index(count)]}, source, true);
             destroy({enemy, random_enemy(owner)}, source, true);
         }
         break;
@@ -2218,13 +2247,14 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
         draw_cards(owner, step.amount, DeckFilter::Any, state_.turn_number >= 7 - owner ? 1 : 0);
         break;
     case CardHandler::KittyTrick: {
-        const int omitted = random_index(state_, 3);
+        const int omitted = pick_index(3);
         if (omitted != 0) enter(owner, step.card);
         if (omitted != 1) heal_leader(owner, 2);
         if (omitted != 2) primitive(Operation::AddEarth, Target::None, 3);
         break;
     }
     case CardHandler::TransformBoardFromDeck: {
+        if (player.deck_remaining() > 0) uncertain();
         std::array<int, kDeckCapacity> choices{};
         int count = 0;
         for (int i = player.deck_idx; i < player.deck_end; ++i) {
@@ -2233,7 +2263,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
         if (count == 0) break;
         for (int i = 0; i < player.board_count; ++i) {
             if (!follower(player.board[i])) continue;
-            const int index = choices[random_index(state_, count)];
+            const int index = choices[pick_index(count)];
             transform({owner, player.board[i].creation_order}, player.deck[index], player.deck_modifiers[index], Evolution::None);
         }
         break;
@@ -2274,7 +2304,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
         int count = 0;
         for (int i = 0; i < 3; ++i) if (!(used & (1 << i))) choices[count++] = i;
         if (count == 0) break;
-        const int choice = choices[random_index(state_, count)];
+        const int choice = choices[pick_index(count)];
         used |= static_cast<std::uint8_t>(1 << choice);
         const int delta = curse ? -1 : 1;
         switch (choice) {
@@ -2302,6 +2332,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
         break;
     }
     case CardHandler::DrawDistinctOneCostSpells: {
+        if (player.deck_remaining() > 0) uncertain();
         std::array<std::string_view, kHandLimit> selected{};
         for (int i = 0; i < step.amount; ++i) {
             std::array<int, kDeckCapacity> slots{};
@@ -2312,7 +2343,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
                     std::find(selected.begin(), selected.begin() + i, def.name) == selected.begin() + i) slots[count++] = index;
             }
             if (!count) break;
-            const auto [card, modifiers] = take_deck_card(player, slots[random_index(state_, count)]);
+            const auto [card, modifiers] = take_deck_card(player, slots[pick_index(count)]);
             selected[i] = definition(card).name;
             keep_drawn(owner, card, modifiers);
         }
@@ -2323,7 +2354,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
         break;
     case CardHandler::GiveRandomPuppetAbility: {
         CardModifiers modifiers{};
-        modifiers.abilities = random_index(state_, 2) == 0 ? kBane : FLAG_WARD;
+        modifiers.abilities = pick_index(2) == 0 ? kBane : FLAG_WARD;
         add_card(player, step.card, modifiers);
         break;
     }
@@ -2805,7 +2836,7 @@ void resolve_effect_steps(GameState& state, int owner, std::span<const Effect> e
     Resolver(state, rules).immediate(owner, effects, source, target);
 }
 
-ActionList legal_actions(const GameState& state, const RuleConfig& rules) {
+ActionList legal_actions(const GameState& state, const RuleConfig& rules, PlayCopies copies) {
     ActionList actions;
     if (state.outcome != Outcome::Ongoing) {
         return actions;
@@ -2945,6 +2976,16 @@ ActionList legal_actions(const GameState& state, const RuleConfig& rules) {
             used_actions(player, card.id).play >= kNameActionLimit) {
             continue;
         }
+        if (copies == PlayCopies::Canonical) {
+            bool duplicate = false;
+            for (int earlier = 0; earlier < src; ++earlier) {
+                if (player.hand[earlier] == card.id && player.hand_modifiers[earlier] == modifiers) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate) continue;
+        }
         if (suppress && cost.form.kind == Kind::Follower) {
             add(ActionType::Play, src);
             continue;
@@ -3025,8 +3066,8 @@ bool apply_action(GameState& state, Action action, const RuleConfig& rules) {
     return true;
 }
 
-void apply_legal_action(GameState& state, Action action, const RuleConfig& rules) {
-    Resolver resolver(state, rules);
+static void resolve_action(GameState& state, Action action, const RuleConfig& rules, bool* certain) {
+    Resolver resolver(state, rules, certain);
     switch (action.type) {
     case ActionType::EndTurn:
         resolver.end_turn();
@@ -3052,6 +3093,7 @@ void apply_legal_action(GameState& state, Action action, const RuleConfig& rules
         break;
     }
     case ActionType::Mulligan:
+        if (certain) *certain = false;
         replace_opening_cards(state, action.choice, rules);
         if (state.turn_player == 0) {
             state.turn_player = 1;
@@ -3065,6 +3107,16 @@ void apply_legal_action(GameState& state, Action action, const RuleConfig& rules
         resolver.fuse(action);
         break;
     }
+}
+
+void apply_legal_action(GameState& state, Action action, const RuleConfig& rules) {
+    resolve_action(state, action, rules, nullptr);
+}
+
+bool apply_observed_action(GameState& state, Action action, const RuleConfig& rules) {
+    bool certain = true;
+    resolve_action(state, action, rules, &certain);
+    return certain;
 }
 
 } // namespace svwb::wb

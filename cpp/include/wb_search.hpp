@@ -20,6 +20,9 @@ private:
 };
 
 [[nodiscard]] Features extract_features(const GameState& state, const MatchupFeatures* matchup = nullptr);
+[[nodiscard]] inline const char* feature_schema(const MatchupFeatures& matchup) {
+    return matchup.legacy_mirror() ? "wb-mirror-v2" : "wb-matchup-v2";
+}
 
 struct RankedTurn {
     std::vector<Action> actions;
@@ -32,6 +35,7 @@ struct Decision {
     GameState next;
     std::vector<PolicySample> policy;
     int visits = 0;
+    bool forced = false;
     std::vector<RankedTurn> ranked;
 };
 

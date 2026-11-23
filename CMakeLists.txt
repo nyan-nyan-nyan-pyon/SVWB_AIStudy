@@ -84,7 +84,7 @@ if(BUILD_TESTING)
     set_tests_properties(search_unit PROPERTIES PASS_REGULAR_EXPRESSION "PASS Phase 2 unit suite")
 
     add_executable(test_wb cpp/tests/test_wb.cpp)
-    target_link_libraries(test_wb PRIVATE svwb_rules)
+    target_link_libraries(test_wb PRIVATE svwb_wb_search)
     set_target_properties(test_wb PROPERTIES CXX_EXTENSIONS OFF)
     svwb_enable_warnings(test_wb)
     add_test(NAME wb_rules_unit COMMAND test_wb)
@@ -102,6 +102,9 @@ if(BUILD_TESTING)
     add_test(NAME wb_nemesis_neutral_random_5000 COMMAND test_wb --nemesis-stress)
     add_test(NAME wb_rotation_registry_469 COMMAND test_wb --rotation-registry)
     add_test(NAME wb_full_rotation_random_10000 COMMAND test_wb --full-rotation-stress)
+    add_test(NAME wb_actor_observation_audit COMMAND test_wb --actor-audit)
+    add_test(NAME wb_search_canonicalization COMMAND test_wb --canonicalization)
+    add_test(NAME wb_search_forced_lethal COMMAND test_wb --forced-lethal)
     set_tests_properties(wb_mirror_random_10000 wb_rotation_mirror_random_10000
         wb_elf_neutral_random_5000 wb_royal_neutral_random_5000
         wb_dragon_neutral_random_5000 wb_nightmare_neutral_random_5000

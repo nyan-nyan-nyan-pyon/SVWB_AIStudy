@@ -24,7 +24,7 @@ def plot_metrics(metrics: Path, output: Path):
     output.mkdir(parents=True, exist_ok=True)
 
     def curve(ax, key, label, color):
-        ax.plot(generations, [float(row[key]) for row in rows], color=color,
+        ax.plot(generations, [float(row.get(key) or "nan") for row in rows], color=color,
                 marker="o", markersize=4, linewidth=2, label=label)
 
     def save(fig, filename):
@@ -63,6 +63,8 @@ def plot_metrics(metrics: Path, output: Path):
     ax.set_title("Evaluation win rates", loc="left", weight="bold")
     curve(ax, "random_win_rate", "Against random moves", VALUE_COLOR)
     curve(ax, "previous_win_rate", "Against previous model", POLICY_COLOR)
+    if any(row.get("baseline_win_rate") for row in rows):
+        curve(ax, "baseline_win_rate", "Against fixed baseline", "#4f7660")
     ax.axhline(0.90, color="#64748b", linestyle="--", label="90% target")
     ax.set_ylabel("Wins / games")
     ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))

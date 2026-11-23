@@ -223,6 +223,8 @@ struct Action {
     bool operator==(const Action&) const = default;
 };
 
+enum class PlayCopies : std::uint8_t { All, Canonical };
+
 inline constexpr int kInlineActions = 2 + 3 * kHandLimit * (kBoardLimit + 1) +
     kBoardLimit * (3 * kBoardLimit + 4);
 
@@ -235,7 +237,7 @@ public:
     [[nodiscard]] Action operator[](int index) const { return begin()[index]; }
 
 private:
-    friend ActionList legal_actions(const GameState&, const RuleConfig&);
+    friend ActionList legal_actions(const GameState&, const RuleConfig&, PlayCopies);
     void push(Action action) {
         if (count_ < kInlineActions) {
             actions_[count_] = action;
@@ -251,10 +253,13 @@ private:
 };
 
 [[nodiscard]] GameState new_game(const Deck& first, const Deck& second, std::uint64_t seed);
-[[nodiscard]] ActionList legal_actions(const GameState& state, const RuleConfig& rules = {});
+[[nodiscard]] ActionList legal_actions(const GameState& state, const RuleConfig& rules = {},
+                                      PlayCopies copies = PlayCopies::All);
 [[nodiscard]] bool apply_action(GameState& state, Action action, const RuleConfig& rules = {});
 // The caller must already know that the action is legal for this position and rule configuration.
 void apply_legal_action(GameState& state, Action action, const RuleConfig& rules = {});
+// True if the action resolved without relying on hidden card identities or a random choice.
+[[nodiscard]] bool apply_observed_action(GameState& state, Action action, const RuleConfig& rules = {});
 [[nodiscard]] bool can_choose_enemy_permanent(const Permanent& object);
 [[nodiscard]] bool follower_fanfare_suppressed(const PlayerState& player);
 [[nodiscard]] inline bool attack_ready(const Permanent& object) {

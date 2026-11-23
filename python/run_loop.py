@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import random
 import shutil
 import tempfile
 import time
@@ -29,7 +30,7 @@ def wb_decks(args):
     return flags
 
 
-def evaluate(args, weights, previous=None):
+def evaluate(args, weights, opponent_weights=None):
     first_count = 2 * (args.eval_games // 4)
     assignments = (
         [(wb_decks(args), args.eval_games)]
@@ -37,7 +38,7 @@ def evaluate(args, weights, previous=None):
         else [(["--deck-a", "A", "--deck-b", "B"], first_count),
               (["--deck-a", "B", "--deck-b", "A"], args.eval_games - first_count)]
     )
-    opponent = ["--opponent-weights", previous] if previous else ["--random-opponent"]
+    opponent = ["--opponent-weights", opponent_weights] if opponent_weights else ["--random-opponent"]
     wins = draws = 0
     eval_seed = (args.seed + 1_000_003) % 2**32
     for index, (deck_args, count) in enumerate(assignments):
@@ -90,9 +91,11 @@ def publish_metrics(output, rows):
 
 def config_for(args):
     keys = ("games", "seconds", "threads", "simulations", "eval_games", "epochs", "batch_size",
-            "replay_window", "seed", "minimum_convergence", "device", "rules")
+            "replay_window", "seed", "minimum_convergence", "device", "rules", "snapshot_ratio")
     result = {key: getattr(args, key) for key in keys}
-    for key in ("deck_a", "deck_b"):
+    if args.rules == "wb":
+        result["wb_actor_version"] = 2
+    for key in ("deck_a", "deck_b", "baseline_weights"):
         path = getattr(args, key)
         if path is not None:
             result[key] = {"file": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
@@ -109,6 +112,9 @@ def initialize_run(args, device):
             raise ValueError("Output already has a run. Use --resume or choose another output directory.")
         saved = json.loads(config.read_text(encoding="utf-8"))
         saved.setdefault("rules", "legacy")
+        saved.setdefault("snapshot_ratio", 0.0)
+        if args.rules == "wb" and saved.get("wb_actor_version") != settings["wb_actor_version"]:
+            raise ValueError("This run uses an older WB feature schema. Start a new output directory for P0.")
         if saved != settings:
             raise ValueError("The run parameters changed. Use a new output directory for changed parameters.")
     elif args.resume:
@@ -135,12 +141,23 @@ def initialize_run(args, device):
     return rows
 
 
+def snapshot_opponent(args, generation, baseline):
+    if not args.snapshot_ratio:
+        return [], None
+    older = random.Random((args.seed << 32) | generation).randrange(max(1, generation - 1))
+    weights = baseline if older == 0 else generation_dir(args.output_dir, older) / "weights.bin"
+    source = "baseline" if older == 0 and args.baseline_weights else weights.parent.name
+    return ["--snapshot-weights", weights, "--snapshot-bps", round(args.snapshot_ratio * 10_000)], source
+
+
 def run_generation(args, generation, rows, device):
     started = time.perf_counter()
     output = args.output_dir
     previous = generation_dir(output, generation - 1)
     target = generation_dir(output, generation)
     seed = (args.seed + generation) % 2**32
+    baseline = args.baseline_weights or generation_dir(output, 0) / "weights.bin"
+    snapshot_flags, snapshot_source = snapshot_opponent(args, generation, baseline)
     print(f"Generation {generation}: self-play", flush=True)
     with tempfile.TemporaryDirectory(prefix=".generation-", dir=output) as stage_name:
         stage = Path(stage_name)
@@ -151,8 +168,10 @@ def run_generation(args, generation, rows, device):
             deck_args = wb_decks(args) if args.rules == "wb" else ["--deck-a", "A", "--deck-b", "B"]
             counters = invoke(args.exe, [
                 *limits, "--threads", args.threads, "--simulations", args.simulations, "--seed", seed,
-                *deck_args, "--weights", previous / "weights.bin", "--log-dir", work,
+                *deck_args, "--weights", previous / "weights.bin", *snapshot_flags, "--log-dir", work,
             ])
+            if args.rules == "wb" and counters.get("feature_schema") not in ("wb-mirror-v2", "wb-matchup-v2"):
+                raise RuntimeError("The WB executable must be rebuilt with P0 actor features")
             for filename in LOG_FILES:
                 shutil.copyfile(work / filename, stage / filename)
             if (work / "matchup_features.json").is_file():
@@ -171,16 +190,24 @@ def run_generation(args, generation, rows, device):
         print(f"Generation {generation}: evaluating", flush=True)
         weights = stage / "weights.bin"
         random_wins, random_draws = evaluate(args, weights)
-        previous_wins, previous_draws = evaluate(args, weights, previous / "weights.bin")
+        previous_weights = previous / "weights.bin"
+        previous_wins, previous_draws = evaluate(args, weights, previous_weights)
+        baseline_wins, baseline_draws = (previous_wins, previous_draws) if baseline == previous_weights else (
+            evaluate(args, weights, baseline)
+        )
         evaluated_at = time.perf_counter()
         selfplay_games = int(counters["games"])
+        snapshot_games = int(counters["snapshot_games"]) if snapshot_flags else 0
         row = {
             "generation": generation, **losses,
             "random_win_rate": random_wins / args.eval_games,
             "previous_win_rate": previous_wins / args.eval_games,
+            "baseline_win_rate": baseline_wins / args.eval_games,
             "random_wins": random_wins, "random_draws": random_draws,
             "previous_wins": previous_wins, "previous_draws": previous_draws,
+            "baseline_wins": baseline_wins, "baseline_draws": baseline_draws,
             "evaluation_games": args.eval_games, "selfplay_games": selfplay_games,
+            "snapshot_games": snapshot_games, "snapshot_source": snapshot_source,
             "selfplay_deck_a_win_rate": int(counters["A_wins"]) / selfplay_games,
             "selfplay_seconds": float(counters["wall_seconds"]),
             "train_seconds": evaluating_at - trained_at,
@@ -194,7 +221,8 @@ def run_generation(args, generation, rows, device):
 
 
 def parse_args():
-    executables = [ROOT / "build/phase5a-release/Release/svwb_ai.exe",
+    executables = [ROOT / "build/phase5c-p0-release/Release/svwb_ai.exe", ROOT / "build/Release/svwb_ai.exe",
+                   ROOT / "build/phase5a-release/Release/svwb_ai.exe",
                    ROOT / "build/windows-release/Release/svwb_ai.exe", ROOT / "build/svwb_ai"]
     default_exe = next((path for path in executables if path.is_file()), executables[-1])
     parser = argparse.ArgumentParser(description=__doc__)
@@ -216,6 +244,10 @@ def parse_args():
     parser.add_argument("--replay-window", type=int, default=5)
     parser.add_argument("--minimum-convergence", type=int, default=20)
     parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument("--snapshot-ratio", type=float, default=0.2,
+                        help="Fraction of self-play games against an older checkpoint (0 disables)")
+    parser.add_argument("--baseline-weights", type=Path,
+                        help="Fixed evaluation baseline (default: generation 0 of this run)")
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
@@ -225,12 +257,15 @@ def parse_args():
     args.rules = args.rules or ("wb" if custom_decks else "legacy")
     if custom_decks and args.output_dir is None:
         parser.error("Specify --output-dir for a custom deck run")
-    for key in ("deck_a", "deck_b"):
+    for key in ("deck_a", "deck_b", "baseline_weights"):
         path = getattr(args, key)
         if path is not None:
             setattr(args, key, path.resolve(strict=True))
     if args.games < 0 or args.seconds < 0 or not 0 <= args.seed < 2**32:
         parser.error("Invalid self-play limits or seed")
+    if not 0 <= args.snapshot_ratio <= 1:
+        parser.error("--snapshot-ratio must be between 0 and 1")
+    args.snapshot_ratio = round(args.snapshot_ratio, 4)
     if args.learning_rate is not None and (not math.isfinite(args.learning_rate) or args.learning_rate <= 0):
         parser.error("--learning-rate must be finite and positive")
     if args.eval_games < 4 or args.eval_games % 2:
@@ -241,7 +276,7 @@ def parse_args():
     if not args.games and not args.seconds:
         args.games = 500
     args.exe = args.exe.resolve(strict=True)
-    default_output = ROOT / ("data/phase4b-mirror" if args.rules == "wb" else "data/phase3")
+    default_output = ROOT / ("data/phase5c-mirror" if args.rules == "wb" else "data/phase3")
     args.output_dir = (args.output_dir or default_output).resolve()
     args.work_dir = args.work_dir.resolve()
     args.work_dir.mkdir(parents=True, exist_ok=True)
@@ -263,6 +298,7 @@ def main():
         print(f"Generation {generation}: value={row['val_loss']:.5f} policy={row['pol_loss']:.5f} "
               f"delta_v={row['delta_v']:.5f} delta_pi={row['delta_pi']:.5f} "
               f"random={row['random_win_rate']:.1%} previous={row['previous_win_rate']:.1%} "
+              f"baseline={row['baseline_win_rate']:.1%} snapshots={row['snapshot_games']}/{row['selfplay_games']} "
               f"elapsed={row['generation_seconds']:.2f}s", flush=True)
     print(f"Completed generations: {len(rows)}, results: {args.output_dir}", flush=True)
 

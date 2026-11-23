@@ -3,7 +3,21 @@
 #include "search.hpp"
 #include "wb_cards.hpp"
 
-namespace svwb::wb {
+namespace svwb {
+
+struct SnapshotOpponent {
+    std::filesystem::path weights;
+    unsigned basis_points = 0;
+
+    [[nodiscard]] bool plays(std::uint64_t game) const {
+        // Schedule seat pairs so both opponents get first and second under either run limit.
+        constexpr std::uint64_t scale = 10'000;
+        const auto offset = (game / 2 % scale) * basis_points + scale / 2;
+        return (offset + basis_points) / scale != offset / scale;
+    }
+};
+
+namespace wb {
 
 struct MatchOptions {
     std::uint64_t games;
@@ -22,8 +36,10 @@ struct MatchOptions {
     SearchOptions search;
     Deck deck_a = kMirrorDeck;
     Deck deck_b = kMirrorDeck;
+    SnapshotOpponent snapshot;
 };
 
 void run_match(const MatchOptions& options);
 
-} // namespace svwb::wb
+} // namespace wb
+} // namespace svwb
