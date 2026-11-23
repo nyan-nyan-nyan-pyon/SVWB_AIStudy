@@ -1,0 +1,14 @@
+{
+  "games": 500,
+  "seconds": 0,
+  "threads": 14,
+  "simulations": 64,
+  "eval_games": 200,
+  "epochs": 5,
+  "batch_size": 256,
+  "replay_window": 5,
+  "seed": 44026,
+  "minimum_convergence": 20,
+  "device": "auto",
+  "rules": "wb"
+}

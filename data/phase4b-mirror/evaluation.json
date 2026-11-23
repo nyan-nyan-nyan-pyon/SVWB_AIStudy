@@ -1,0 +1,66 @@
+{
+  "generation": 25,
+  "converged": true,
+  "delta_v": 0.02651229500770569,
+  "delta_pi": 0.024152321740984917,
+  "weights_sha256": "9cd778538e71d34dd159438a823a3d0cceb2c453b471c4701259275275d65fbf",
+  "previous_win_rate_windows": [
+    {
+      "first": 11,
+      "last": 15,
+      "rate": 0.497
+    },
+    {
+      "first": 16,
+      "last": 20,
+      "rate": 0.511
+    },
+    {
+      "first": 21,
+      "last": 25,
+      "rate": 0.502
+    }
+  ],
+  "simulations": 64,
+  "mirror_seed": 722026,
+  "random_seed": 722027,
+  "training_games": 12500,
+  "generation_seconds": 858.4157169999089,
+  "mirror": {
+    "games": 2000,
+    "A_first": 1000,
+    "A_second": 1000,
+    "A_wins": 988,
+    "B_wins": 1012,
+    "first_wins": 978,
+    "second_wins": 1022,
+    "both_lose": 0,
+    "turns": 29249,
+    "avg_turns": 14.6245,
+    "avg_rounds": 7.557,
+    "wall_seconds": 104.199,
+    "first_win_rate": 0.489,
+    "second_win_rate": 0.511,
+    "both_lose_rate": 0.0,
+    "competitor_a_win_rate": 0.494
+  },
+  "random_opponent": {
+    "games": 200,
+    "A_first": 100,
+    "A_second": 100,
+    "A_wins": 200,
+    "B_wins": 0,
+    "first_wins": 100,
+    "second_wins": 100,
+    "both_lose": 0,
+    "turns": 2141,
+    "avg_turns": 10.705,
+    "avg_rounds": 5.6,
+    "wall_seconds": 2.6972,
+    "first_win_rate": 0.5,
+    "second_win_rate": 0.5,
+    "both_lose_rate": 0.0,
+    "competitor_a_win_rate": 1.0
+  },
+  "elapsed_seconds": 107.68963639996946
+}
