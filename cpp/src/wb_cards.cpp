@@ -85,6 +85,12 @@ constexpr std::array<CardDef, kCardSlots> cards{{
         {LastWords, Summon, Target::None, 1, kAlmiraj},
         {OnAct, ReduceCountdown, Target::Self, 1},
     }}},
+    {.id=kCorrector, .name="地害の矯正者", .kind=Follower, .cost=8, .atk=3, .hp=5, .effects={{
+        {OnPlay, Banish, Target::ChosenEnemyFollower},
+        {OnPlay, Summon, Target::None, 2, kRabbit},
+        {OnSuperEvolve, Draw, Target::None, 2},
+        {OnSuperEvolve, Heal, Target::OwnLeader, 2},
+    }}, .official_id=11063110},
 }};
 
 constexpr std::array<CrestDef, 3> crests{{
@@ -125,7 +131,7 @@ CardId printed_card(CardId id) {
 }
 
 bool is_deck_card(CardId id) {
-    return id >= kFirstCard && id < kFirstCard + kDeckCardKinds;
+    return (id >= kFirstCard && id <= kTeresa) || id == kCorrector;
 }
 
 } // namespace svwb::wb

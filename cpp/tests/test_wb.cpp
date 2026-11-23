@@ -419,6 +419,46 @@ void sister() {
     CHECK(s.player().board[0].abilities == FLAG_WARD && s.player().pp == 4);
 }
 
+void corrector_and_mirror_deck() {
+    const auto* def = find_card(kCorrector);
+    CHECK(def && def->official_id == 11063110 && def->cost == 8 && def->atk == 3 && def->hp == 5);
+    CHECK(kMirrorDeck.size() == 40);
+    for (const auto id : kMirrorCardIds) {
+        const bool two = id == kCraftsman || id == kColette || id == kDunamis ||
+                         id == kProjectedStatue || id == kTeresa;
+        CHECK(std::count(kMirrorDeck.begin(), kMirrorDeck.end(), id) == (two ? 2 : 3));
+    }
+
+    Scenario s;
+    s.place(kRabbit, 1);
+    s.hand({kCorrector, kEvidence, kExias, kRapid});
+    s.reject({Play, 0});
+    s.run({Play, 0, 0});
+    CHECK(s.player().pp == 2 && s.player(1).board_count == 0 && s.player(1).shadows == 0);
+    CHECK(s.player().leader_hp == 20 && s.player().shadows == 0);
+    CHECK(s.player().board_count == 3 && s.player().hand_count == 1 && s.player().hand[0] == kRapid);
+    for (const auto slot : {1, 2}) {
+        const auto& rabbit = s.player().board[slot];
+        CHECK(rabbit.card_id == kRabbit && rabbit.evolution == Evolution::Normal && rabbit.hp == 3);
+    }
+    CHECK(!s.player().manual_evolved);
+    s.player().leader_hp = 15;
+    const auto cursor = s.player().deck_idx;
+    s.run({SuperEvolve, 0});
+    CHECK(s.player().leader_hp == 17 && s.player().hand_count == 3 && s.player().deck_idx == cursor + 2);
+    CHECK(s.player().hand[1] == s.player().deck[cursor] && s.player().hand[2] == s.player().deck[cursor + 1]);
+    CHECK(s.player().board[0].evolution == Evolution::Super && s.player().sep == 1);
+
+    Scenario absent;
+    absent.hand({kCorrector});
+    absent.run({Play, 0});
+    CHECK(absent.player().board_count == 3 && absent.player().board[1].evolution == Evolution::None);
+    absent.player().leader_hp = 15;
+    absent.player().deck_idx = kDeckSize - 1;
+    absent.run({SuperEvolve, 0});
+    CHECK(absent.state.end_reason == EndReason::EmptyDeck && absent.player().leader_hp == 15);
+}
+
 void mulligan_and_first_draw() {
     for (int mask = 0; mask < 16; ++mask) {
         RuleConfig rules;
@@ -746,6 +786,7 @@ constexpr std::array kUnits{
     Unit{"Rapid", rapid}, Unit{"Teresa", teresa}, Unit{"rabbit", rabbit}, Unit{"evidence", evidence},
     Unit{"holy falcon", [] { falcon(kHolyFalcon, 2, 2); }},
     Unit{"splendid hawk", [] { falcon(kSplendidHawk, 4, 4); }}, Unit{"healing sister", sister},
+    Unit{"corrector and exact mirror deck", corrector_and_mirror_deck},
     Unit{"mulligan and first draw", mulligan_and_first_draw}, Unit{"extra PP", extra_pp},
     Unit{"evolution rights and super combat", evolution_rights_and_super_combat},
     Unit{"turn start and crest ordering", turn_start_order_and_crests},
@@ -857,7 +898,7 @@ int stress() {
     const auto started = std::chrono::steady_clock::now();
     for (int game = 0; game < games; ++game) {
         const auto game_seed = rng();
-        auto state = new_game(kProvisionalMirror, kProvisionalMirror, game_seed);
+        auto state = new_game(kMirrorDeck, kMirrorDeck, game_seed);
         int actions = 0;
         Action selected{};
         try {
@@ -889,7 +930,7 @@ int stress() {
         total += count;
     }
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-    std::cout << "PASS games=" << games << " seed=" << seed << " actions=" << total
+    std::cout << "PASS exact_mirror games=" << games << " seed=" << seed << " actions=" << total
               << " max_actions=" << max_actions << " invariant_failures=0\n"
               << "first_wins=" << outcomes[1] << " second_wins=" << outcomes[2] << " both_lose=" << outcomes[3]
               << " lethal=" << reasons[1] << " deck_out=" << reasons[2] << " turn_limit=" << reasons[3] << '\n'

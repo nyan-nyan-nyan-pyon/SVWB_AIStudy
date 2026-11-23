@@ -3,6 +3,7 @@
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
 import re
 import shutil
@@ -37,14 +38,18 @@ def invoke(executable: Path, arguments):
 
 def evaluate(args, weights, previous=None):
     first_count = 2 * (args.eval_games // 4)
+    assignments = (
+        [(["--rules", "wb"], args.eval_games)]
+        if args.rules == "wb"
+        else [(["--deck-a", "A", "--deck-b", "B"], first_count),
+              (["--deck-a", "B", "--deck-b", "A"], args.eval_games - first_count)]
+    )
     opponent = ["--opponent-weights", previous] if previous else ["--random-opponent"]
     wins = draws = 0
     eval_seed = (args.seed + 1_000_003) % 2**32
-    for index, (deck_a, deck_b, count) in enumerate((
-        ("A", "B", first_count), ("B", "A", args.eval_games - first_count),
-    )):
+    for index, (deck_args, count) in enumerate(assignments):
         result = invoke(args.exe, [
-            "--evaluate", "--weights", weights, *opponent, "--deck-a", deck_a, "--deck-b", deck_b,
+            "--evaluate", "--weights", weights, *opponent, *deck_args,
             "--games", count, "--seed", (eval_seed + index) % 2**32, "--threads", args.threads,
             "--simulations", args.simulations,
         ])
@@ -55,7 +60,7 @@ def evaluate(args, weights, previous=None):
     return wins, draws
 
 
-def converged(rows, minimum):
+def converged(rows, minimum, rules="legacy"):
     latest = rows[-1]
     generation = latest["generation"]
     if generation < max(15, minimum) or generation % 5:
@@ -63,9 +68,11 @@ def converged(rows, minimum):
     if latest["delta_v"] > 0.035 or latest["delta_pi"] > 0.042:
         return False
     last_fifteen = rows[-15:]
-    means = [sum(row["selfplay_deck_a_win_rate"] for row in last_fifteen[start:start + 5]) / 5
+    metric = "previous_win_rate" if rules == "wb" else "selfplay_deck_a_win_rate"
+    means = [sum(row[metric] for row in last_fifteen[start:start + 5]) / 5
              for start in (0, 5, 10)]
-    return all(abs(current - previous) <= 0.03 for previous, current in zip(means, means[1:]))
+    return all(abs(current - previous) <= 0.03 + 1e-12
+               for previous, current in zip(means, means[1:]))
 
 
 def write_json(path, value):
@@ -80,9 +87,8 @@ def publish_metrics(output, rows):
     csv_path = output / "metrics.csv"
     temporary = csv_path.with_suffix(".csv.tmp")
     with temporary.open("w", encoding="utf-8", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=[
-            key for key in rows[0] if key != "replay_generations"
-        ], extrasaction="ignore")
+        fields = dict.fromkeys(key for row in rows for key in row if key != "replay_generations")
+        writer = csv.DictWriter(stream, fieldnames=list(fields), extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
     temporary.replace(csv_path)
@@ -91,7 +97,7 @@ def publish_metrics(output, rows):
 
 def config_for(args):
     keys = ("games", "seconds", "threads", "simulations", "eval_games", "epochs", "batch_size",
-            "replay_window", "seed", "minimum_convergence", "device")
+            "replay_window", "seed", "minimum_convergence", "device", "rules")
     return {key: getattr(args, key) for key in keys}
 
 
@@ -103,7 +109,9 @@ def initialize_run(args, device):
     if config.exists():
         if not args.resume:
             raise ValueError("Output already has a run. Use --resume or choose another output directory.")
-        if json.loads(config.read_text(encoding="utf-8")) != settings:
+        saved = json.loads(config.read_text(encoding="utf-8"))
+        saved.setdefault("rules", "legacy")
+        if saved != settings:
             raise ValueError("The run parameters changed. Use a new output directory for changed parameters.")
     elif args.resume:
         raise ValueError("Cannot resume an output directory without config.json")
@@ -142,9 +150,10 @@ def run_generation(args, generation, rows, device):
             work = Path(work_name)
             limits = (["--games", args.games] if args.games else []) + (
                 ["--seconds", args.seconds] if args.seconds else [])
+            deck_args = ["--rules", "wb"] if args.rules == "wb" else ["--deck-a", "A", "--deck-b", "B"]
             counters = invoke(args.exe, [
                 *limits, "--threads", args.threads, "--simulations", args.simulations, "--seed", seed,
-                "--deck-a", "A", "--deck-b", "B", "--weights", previous / "weights.bin", "--log-dir", work,
+                *deck_args, "--weights", previous / "weights.bin", "--log-dir", work,
             ])
             for filename in LOG_FILES:
                 shutil.copyfile(work / filename, stage / filename)
@@ -156,7 +165,8 @@ def run_generation(args, generation, rows, device):
         replay.append((generation, stage))
         reference = (stage if generation == 1 else generation_dir(output, 1)) / "evaluation.npz"
         losses = train_generation(replay, previous / "model.pt", stage, reference, generation,
-                                  device=device, epochs=args.epochs, batch_size=args.batch_size, seed=seed)
+                                  device=device, epochs=args.epochs, batch_size=args.batch_size, seed=seed,
+                                  learning_rate=args.learning_rate)
         evaluating_at = time.perf_counter()
         print(f"Generation {generation}: evaluating", flush=True)
         weights = stage / "weights.bin"
@@ -177,7 +187,7 @@ def run_generation(args, generation, rows, device):
             "evaluation_seconds": evaluated_at - evaluating_at,
             "generation_seconds": evaluated_at - started,
         }
-        row["converged"] = converged([*rows, row], args.minimum_convergence)
+        row["converged"] = converged([*rows, row], args.minimum_convergence, args.rules)
         write_json(stage / "metrics.json", row)
         stage.rename(target)
     return row
@@ -189,7 +199,8 @@ def parse_args():
                    else ROOT / "build/svwb_ai")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--exe", type=Path, default=default_exe)
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "data/phase3")
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--rules", choices=("legacy", "wb"), default="legacy")
     parser.add_argument("--work-dir", type=Path, default=Path(tempfile.gettempdir()))
     parser.add_argument("--generations", type=int, default=10)
     parser.add_argument("--games", type=int, default=0, help="Self-play games per generation")
@@ -198,6 +209,7 @@ def parse_args():
     parser.add_argument("--simulations", type=int, default=64)
     parser.add_argument("--eval-games", type=int, default=200, help="Games against each evaluation opponent")
     parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--learning-rate", type=float, help="Override the checkpoint's Adam learning rate")
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--replay-window", type=int, default=5)
     parser.add_argument("--minimum-convergence", type=int, default=20)
@@ -207,6 +219,8 @@ def parse_args():
     args = parser.parse_args()
     if args.games < 0 or args.seconds < 0 or not 0 <= args.seed < 2**32:
         parser.error("Invalid self-play limits or seed")
+    if args.learning_rate is not None and (not math.isfinite(args.learning_rate) or args.learning_rate <= 0):
+        parser.error("--learning-rate must be finite and positive")
     if args.eval_games < 4 or args.eval_games % 2:
         parser.error("--eval-games must be even and at least four for balanced seats and decks")
     for key in ("generations", "threads", "simulations", "epochs", "batch_size", "replay_window", "minimum_convergence"):
@@ -215,7 +229,8 @@ def parse_args():
     if not args.games and not args.seconds:
         args.games = 500
     args.exe = args.exe.resolve(strict=True)
-    args.output_dir = args.output_dir.resolve()
+    default_output = ROOT / ("data/phase4b-mirror" if args.rules == "wb" else "data/phase3")
+    args.output_dir = (args.output_dir or default_output).resolve()
     args.work_dir = args.work_dir.resolve()
     args.work_dir.mkdir(parents=True, exist_ok=True)
     return args

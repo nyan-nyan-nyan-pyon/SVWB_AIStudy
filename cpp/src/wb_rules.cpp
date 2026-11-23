@@ -933,7 +933,7 @@ void replace_opening_cards(GameState& state, int mask, const RuleConfig& rules) 
 }
 
 void check_deck(const Deck& deck) {
-    std::array<int, kDeckCardKinds> copies{};
+    std::array<int, kCardSlots> copies{};
     for (CardId id : deck) {
         if (!is_deck_card(id) || ++copies[id - kFirstCard] > 3) {
             throw std::invalid_argument("Deck uses a non-deck card or exceeds the three-copy limit");

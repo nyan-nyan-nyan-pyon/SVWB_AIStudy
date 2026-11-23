@@ -8,7 +8,7 @@ inline constexpr int kCrestLimit = 5;
 inline constexpr int kTurnLimit = 40;
 inline constexpr int kNameActionLimit = 20;
 inline constexpr CardId kFirstCard = 101;
-inline constexpr CardId kLastForm = 120;
+inline constexpr CardId kLastForm = 121;
 inline constexpr int kCardSlots = kLastForm - kFirstCard + 1;
 using EntityId = std::uint32_t;
 

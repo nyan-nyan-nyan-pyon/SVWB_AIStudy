@@ -34,8 +34,8 @@ if(MSVC)
 endif()
 svwb_enable_warnings(svwb_rules)
 
-add_executable(svwb_ai cpp/src/main.cpp)
-target_link_libraries(svwb_ai PRIVATE svwb_search Threads::Threads)
+add_executable(svwb_ai cpp/src/main.cpp cpp/src/wb_match.cpp cpp/src/wb_search.cpp)
+target_link_libraries(svwb_ai PRIVATE svwb_search svwb_rules Threads::Threads)
 set_target_properties(svwb_ai PROPERTIES CXX_EXTENSIONS OFF)
 svwb_enable_warnings(svwb_ai)
 
@@ -74,5 +74,8 @@ if(BUILD_TESTING)
         add_test(NAME analysis_exports COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/cpp/tests/check_analysis.py" "$<TARGET_FILE:svwb_ai>")
         set_tests_properties(analysis_exports PROPERTIES TIMEOUT 60)
+        add_test(NAME wb_training_exports COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cpp/tests/check_wb_match.py" "$<TARGET_FILE:svwb_ai>")
+        set_tests_properties(wb_training_exports PROPERTIES TIMEOUT 60)
     endif()
 endif()

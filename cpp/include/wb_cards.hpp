@@ -27,7 +27,8 @@ inline constexpr CardId kHolyFalcon = 117;
 inline constexpr CardId kSplendidHawk = 118;
 inline constexpr CardId kHealingSister = 119;
 inline constexpr CardId kAlmirajCrystal = 120;
-inline constexpr int kDeckCardKinds = 14;
+inline constexpr CardId kCorrector = 121;
+inline constexpr int kDeckCardKinds = 15;
 inline constexpr int kEffectSlots = 8;
 inline constexpr std::uint8_t kEnhancedMode = 4;
 
@@ -73,6 +74,7 @@ struct CardDef {
     CardId crystal_form = 0;
     bool clue = false;
     std::array<Effect, kEffectSlots> effects{};
+    std::uint32_t official_id = 0;
 };
 
 struct CrestDef {
@@ -95,11 +97,31 @@ void resolve_effect_steps(GameState& state, int owner, std::span<const Effect> e
 inline constexpr Deck kProvisionalMirror = [] {
     Deck deck{};
     std::size_t cursor = 0;
-    for (int i = 0; i < kDeckCardKinds; ++i) {
-        const int copies = i < kDeckSize - 2 * kDeckCardKinds ? 3 : 2;
+    for (int i = 0; i < 14; ++i) {
+        const int copies = i < 12 ? 3 : 2;
         for (int copy = 0; copy < copies; ++copy) {
             deck[cursor++] = static_cast<CardId>(kFirstCard + i);
         }
+    }
+    return deck;
+}();
+
+inline constexpr std::array<CardId, kDeckCardKinds> kMirrorCardIds{
+    kWingedStatue, kLilium, kExias, kCraftsman, kColette, kAlmiraj, kDunamis, kTrainer,
+    kTestimony, kProjectedStatue, kRituel, kPropagation, kRapid, kTeresa, kCorrector,
+};
+
+inline constexpr Deck kMirrorDeck = [] {
+    constexpr std::array<int, kDeckCardKinds> copies{3, 3, 3, 2, 2, 3, 2, 3, 3, 2, 3, 3, 3, 2, 3};
+    Deck deck{};
+    std::size_t cursor = 0;
+    for (std::size_t i = 0; i < copies.size(); ++i) {
+        for (int copy = 0; copy < copies[i]; ++copy) {
+            deck[cursor++] = kMirrorCardIds[i];
+        }
+    }
+    if (cursor != deck.size()) {
+        throw "The mirror deck must contain exactly 40 cards";
     }
     return deck;
 }();

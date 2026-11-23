@@ -2,10 +2,11 @@
 #include "card_db.hpp"
 #include "engine.hpp"
 #include "search.hpp"
+#include "training_logs.hpp"
+#include "wb_match.hpp"
 
 #include <algorithm>
 #include <atomic>
-#include <bit>
 #include <charconv>
 #include <chrono>
 #include <exception>
@@ -15,7 +16,6 @@
 #include <limits>
 #include <mutex>
 #include <optional>
-#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -41,6 +41,7 @@ struct Options {
     std::filesystem::path analysis_dir;
     std::optional<std::uint64_t> trace_game;
     std::optional<std::size_t> trace_top;
+    bool wb_rules = false;
     bool evaluate = false;
     bool random_opponent = false;
     SearchOptions search;
@@ -52,12 +53,14 @@ void usage(std::ostream& out) {
            "               [--opponent-weights FILE | --opponent-seed N]\n"
            "               [--simulations N] [--no-exploration] [--log-dir DIR]\n"
            "               [--evaluate [--random-opponent]]\n"
+           "               [--rules legacy|wb]\n"
            "               [--analysis-dir DIR [--trace-game N] [--trace-top N]]\n"
            "Evaluation uses greedy selection and no search noise. --random-opponent\n"
            "samples uniformly from all legal actions, including end turn.\n"
            "Starts at most N games, or stops starting games after N seconds, whichever comes first.\n"
            "Games in progress finish. Seats alternate between the two competitors.\n"
-           "Analysis writes turn_trace.json (default game 1, top 5) and opening_win_rates.csv.\n"
+           "--rules wb uses the fixed 40-card mirror. Its analysis records one win per seat by default.\n"
+           "Analysis writes opening_win_rates.csv and JSON traces (top 5 by default).\n"
            "Without a game or time limit, runs one game. Without weights, uses seeded random weights.\n";
 }
 
@@ -131,6 +134,11 @@ Options parse_options(int argc, char** argv) {
             options.trace_game = number<std::uint64_t>(value, flag, 1);
         } else if (flag == "--trace-top") {
             options.trace_top = number<std::size_t>(value, flag, 1, kMaxCandidates);
+        } else if (flag == "--rules") {
+            if (value != "legacy" && value != "wb") {
+                throw std::invalid_argument("--rules must be legacy or wb");
+            }
+            options.wb_rules = value == "wb";
         } else {
             throw std::invalid_argument("Unknown option " + std::string(flag));
         }
@@ -153,72 +161,6 @@ Options parse_options(int argc, char** argv) {
     }
     return options;
 }
-
-struct TrainingSample {
-    Features features;
-    float target;
-};
-
-static_assert(sizeof(TrainingSample) == (kFeatureDim + 1) * sizeof(float));
-
-struct GameLog {
-    std::vector<TrainingSample> values;
-    std::vector<TrainingSample> policies;
-    std::vector<std::int32_t> policy_sizes;
-};
-
-void write_word(std::ofstream& output, std::uint32_t word) {
-    std::array<unsigned char, 4> bytes{};
-    for (unsigned i = 0; i < bytes.size(); ++i) {
-        bytes[i] = static_cast<unsigned char>(word >> (8 * i));
-    }
-    output.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-}
-
-void write_samples(std::ofstream& output, std::span<const TrainingSample> samples) {
-    if constexpr (std::endian::native == std::endian::little) {
-        output.write(reinterpret_cast<const char*>(samples.data()),
-                     static_cast<std::streamsize>(samples.size_bytes()));
-    } else {
-        for (const auto& sample : samples) {
-            for (const float feature : sample.features) {
-                write_word(output, std::bit_cast<std::uint32_t>(feature));
-            }
-            write_word(output, std::bit_cast<std::uint32_t>(sample.target));
-        }
-    }
-}
-
-class TrainingLogs {
-public:
-    explicit TrainingLogs(const std::filesystem::path& directory) {
-        std::filesystem::create_directories(directory);
-        values_.exceptions(std::ios::badbit | std::ios::failbit);
-        policies_.exceptions(std::ios::badbit | std::ios::failbit);
-        values_.open(directory / "val_log.bin", std::ios::binary | std::ios::trunc);
-        policies_.open(directory / "pol_log.bin", std::ios::binary | std::ios::trunc);
-    }
-
-    // The caller holds the match output lock so a whole game's two streams stay in order.
-    void append(const GameLog& log) {
-        write_samples(values_, log.values);
-        std::span<const TrainingSample> remaining(log.policies);
-        for (const auto size : log.policy_sizes) {
-            write_word(policies_, static_cast<std::uint32_t>(size));
-            write_samples(policies_, remaining.first(size));
-            remaining = remaining.subspan(size);
-        }
-    }
-
-    void finish() {
-        values_.close();
-        policies_.close();
-    }
-
-private:
-    std::ofstream values_;
-    std::ofstream policies_;
-};
 
 struct GameResult {
     GameLog log;
@@ -442,7 +384,15 @@ int main(int argc, char** argv) {
         return 0;
     }
     try {
-        run(parse_options(argc, argv));
+        const auto options = parse_options(argc, argv);
+        if (options.wb_rules) {
+            svwb::wb::run_match({options.games, options.seconds, options.threads, options.seed,
+                options.opponent_seed, options.weights, options.opponent_weights, options.log_dir,
+                options.analysis_dir, options.trace_game, options.trace_top.value_or(5),
+                options.evaluate, options.random_opponent, options.search});
+        } else {
+            run(options);
+        }
     } catch (const std::exception& error) {
         std::cerr << "svwb_ai: " << error.what() << '\n';
         return 1;

@@ -173,9 +173,12 @@ def measure_drift(model, previous, reference, device):
 
 
 def train_generation(replay_dirs, previous_path: Path, output: Path, reference_path: Path,
-                     generation: int, *, device: torch.device, epochs: int, batch_size: int, seed: int):
+                     generation: int, *, device: torch.device, epochs: int, batch_size: int, seed: int,
+                     learning_rate=None):
     if not replay_dirs or epochs < 1 or batch_size < 1:
         raise ValueError("Replay directories, positive epochs and positive batch size are required")
+    if learning_rate is not None and (not math.isfinite(learning_rate) or learning_rate <= 0):
+        raise ValueError("Learning rate must be finite and positive")
     torch.manual_seed(seed)
     replays = [read_replay(path) for _, path in replay_dirs]
     if not reference_path.exists():
@@ -214,6 +217,9 @@ def train_generation(replay_dirs, previous_path: Path, output: Path, reference_p
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
     if checkpoint["optimizer"] is not None:
         optimizer.load_state_dict(checkpoint["optimizer"])
+    if learning_rate is not None:
+        for group in optimizer.param_groups:
+            group["lr"] = learning_rate
     del checkpoint
     totals = torch.zeros(2, device=device)
     for _ in range(epochs):
@@ -244,6 +250,7 @@ def train_generation(replay_dirs, previous_path: Path, output: Path, reference_p
     metrics = {
         "val_loss": val_loss, "pol_loss": pol_loss, "delta_v": delta_v, "delta_pi": delta_pi,
         "training_turns": turns.numel(), "reference_turns": len(reference["values"]),
+        "learning_rate": optimizer.param_groups[0]["lr"],
         "replay_generations": [number for number, _ in replay_dirs],
         "device": torch.cuda.get_device_name(device) if device.type == "cuda" else "CPU",
     }
@@ -264,6 +271,7 @@ def main():
     parser.add_argument("--eval-file", type=Path)
     parser.add_argument("--replay-window", type=int, default=5)
     parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--learning-rate", type=float, help="Override the checkpoint's Adam learning rate")
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
@@ -274,7 +282,7 @@ def main():
     metrics = train_generation(paths, args.previous, args.output_dir,
                                args.eval_file or args.replay_root / "evaluation.npz",
                                args.generation, device=pick_device(args.device), epochs=args.epochs,
-                               batch_size=args.batch_size, seed=args.seed)
+                               batch_size=args.batch_size, seed=args.seed, learning_rate=args.learning_rate)
     print(json.dumps(metrics, indent=2))
 
 
