@@ -55,6 +55,7 @@ enum class EndReason : std::uint8_t { None, Health, EmptyDeck, TurnLimit };
 enum class CrestId : std::uint8_t {
     None, Testimony, Rituel, Rapid, Haylem, Erralde, Kukishiro, Sisters,
     Shrink, Expand, Dustdays, DeerKing, Beasts, Unkei, March, Gildaria, Almerize,
+    Yube, Wadatsumi, Reflection, Okuyoka, Miltio, IstenDead, Gremory,
 };
 
 // Supplemental ability flags used by the extended combat and target rules.
@@ -66,6 +67,10 @@ inline constexpr std::uint16_t kIntimidate = 1 << 11;
 inline constexpr std::uint16_t kAttackBlocked = 1 << 12;
 inline constexpr std::uint16_t kDrain = 1 << 13;
 inline constexpr std::uint16_t kDoubleStrike = 1 << 14;
+inline constexpr std::uint16_t kIgnoreWard = 1 << 15;
+inline constexpr std::uint8_t kLoseLastWords = 1 << 0;
+inline constexpr std::uint8_t kRebirthLastWords = 1 << 1;
+inline constexpr std::uint8_t kDeadTrait = 1 << 2;
 
 struct CardModifiers {
     std::uint16_t abilities;
@@ -76,6 +81,7 @@ struct CardModifiers {
     std::uint8_t fused_ply;
     std::uint8_t fused_materials;
     std::int8_t temporary_cost_delta;
+    std::uint8_t effect_flags;
 
     bool operator==(const CardModifiers&) const = default;
 };
@@ -103,6 +109,7 @@ struct Permanent {
     std::uint8_t sequence;
     bool banish_at_end;
     std::uint8_t last_trigger_ply;
+    std::int16_t temporary_attack;
 
     bool operator==(const Permanent&) const = default;
 };
@@ -128,6 +135,7 @@ struct CardCounters {
     CardId id;
     std::uint16_t destroyed;
     NamedActions actions;
+    std::uint8_t entered;
 
     bool operator==(const CardCounters&) const = default;
 };
@@ -168,6 +176,8 @@ struct PlayerState {
     bool manual_evolved;
     bool leader_barrier;
     bool acted_evidence;
+    bool attacked_leader_this_turn;
+    bool attacked_leader_last_turn;
 
     [[nodiscard]] int available_pp() const { return pp + bonus_pp; }
     [[nodiscard]] bool overflow() const { return max_pp >= 7; }
@@ -196,6 +206,8 @@ struct Action {
     std::uint8_t choice = 0; // One-based mode or a mulligan/fusion mask. Fusion skips the source slot.
     std::uint16_t selection = 0; // Slot mask for effects selecting multiple cards from one zone.
     bool selection_in_hand = false;
+    bool selection_on_enemy = false;
+    std::int8_t secondary_slot = kNoTarget;
 
     bool operator==(const Action&) const = default;
 };
@@ -233,6 +245,7 @@ private:
 // The caller must already know that the action is legal for this position and rule configuration.
 void apply_legal_action(GameState& state, Action action, const RuleConfig& rules = {});
 [[nodiscard]] bool can_choose_enemy_permanent(const Permanent& object);
+[[nodiscard]] bool follower_fanfare_suppressed(const PlayerState& player);
 [[nodiscard]] inline bool attack_ready(const Permanent& object) {
     const bool twice = (object.abilities & kDoubleStrike) != 0;
     return !object.attacked_twice && (!object.attacked_this_turn || twice) &&

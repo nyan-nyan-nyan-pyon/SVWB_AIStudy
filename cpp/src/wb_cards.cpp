@@ -49,6 +49,14 @@ std::span<const CardId> royal_rotation() {
     return rotation_royal;
 }
 
+std::span<const CardId> dragon_rotation() {
+    return rotation_dragon;
+}
+
+std::span<const CardId> nightmare_rotation() {
+    return rotation_nightmare;
+}
+
 bool is_deck_card(CardId id) {
     const auto* card = find_card(id);
     return card && card->implemented && card->deck_eligible;

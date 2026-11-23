@@ -110,7 +110,7 @@ std::string_view mode_name(CardId id, int mode) {
     if (mode == kAllModes) return "すべてのモード";
     const auto* card = find_card(id);
     if (card && mode >= 1 && mode <= card->modes) {
-        const std::string_view markers[]{"（1）", "（2）", "（3）"};
+        const std::string_view markers[]{"（1）", "（2）", "（3）", "（4）"};
         const auto start = card->text.find(markers[mode - 1]);
         if (start != std::string_view::npos) {
             auto line = card->text.substr(start + markers[mode - 1].size());
@@ -150,7 +150,8 @@ Object describe_action(const GameState& state, Action action, std::optional<Enti
         result["source_slot"] = action.src;
         const auto& card = *find_card(player.hand[action.src]);
         const auto price = card_cost(card, player.hand_modifiers[action.src]);
-        const int enhanced_price = enhance_payment(card, player.available_pp());
+        const int enhanced_price = card.kind == Kind::Follower && follower_fanfare_suppressed(player)
+            ? 0 : enhance_payment(card, player.available_pp());
         const bool enhance = enhanced_price != 0;
         const bool alternate = !enhance && price > player.available_pp();
         const bool crystal = alternate && card.crystal_form;
@@ -162,7 +163,16 @@ Object describe_action(const GameState& state, Action action, std::optional<Enti
         result["cost"] = cost;
         const std::string_view verb = crystal ? "結晶" : accelerate ? "アクセラレート" : enhance ? "エンハンス" : "プレイ";
         label = std::string(verb) + " " + std::to_string(cost) + "PP｜" + std::string(card.name);
-        if (action.choice && !mode_name(card.id, action.choice).empty()) {
+        if (action.choice & kModeMask) {
+            Array modes;
+            for (int mode = 1; mode <= card.modes; ++mode) {
+                if (!(action.choice & (1 << (mode - 1)))) continue;
+                modes.emplace_back(mode);
+                label += " · ";
+                label += mode_name(card.id, mode);
+            }
+            result["modes"] = std::move(modes);
+        } else if (action.choice && !mode_name(card.id, action.choice).empty()) {
             label += " · ";
             label += mode_name(card.id, action.choice);
         }
@@ -240,23 +250,34 @@ Object describe_action(const GameState& state, Action action, std::optional<Enti
         }
     }
     if (action.selection && !(public_before && action.type == ActionType::Play)) {
-        const bool hand = action.selection_in_hand || action.type != ActionType::Play;
+        const bool hand = !action.selection_on_enemy && (action.selection_in_hand || action.type != ActionType::Play);
+        const auto& board_side = action.selection_on_enemy ? state.players[1 - seat] : player;
         Array slots;
         label += " → ";
         if (hand && public_before) {
             label += "非公開の手札 " + std::to_string(std::popcount(action.selection)) + "枚";
         } else {
-            for (int slot = 0; slot < (hand ? player.hand_count : player.board_count); ++slot) {
+            for (int slot = 0; slot < (hand ? player.hand_count : board_side.board_count); ++slot) {
                 if (!(action.selection & (1 << slot))) continue;
                 if (!slots.empty()) label += " ＋ ";
-                const auto id = hand ? player.hand[slot] : player.board[slot].card_id;
+                const auto id = hand ? player.hand[slot] : board_side.board[slot].card_id;
                 label += find_card(id)->name;
                 label += std::string(hand ? "（手札 " : "（場 ") + std::to_string(slot + 1) + "）";
                 slots.emplace_back(slot);
             }
         }
-        result["target_kind"] = hand ? "hand" : "own_board";
+        result["target_kind"] = hand ? "hand" : action.selection_on_enemy ? "board" : "own_board";
         result["target_slots"] = std::move(slots);
+    }
+    if (action.secondary_slot >= 0) {
+        if (public_before) {
+            label += "／手札1枚を捨てる";
+        } else {
+            result["discard_slot"] = action.secondary_slot;
+            label += "／捨てる手札 ";
+            label += find_card(player.hand[action.secondary_slot])->name;
+            label += "（手札 " + std::to_string(action.secondary_slot + 1) + "）";
+        }
     }
     result["label"] = std::move(label);
     return result;

@@ -191,7 +191,8 @@ GameState actions_json(std::ostream& out, const GameState& initial, std::span<co
             card_fields(out, hand ? player.hand[action.src] : player.board[action.src].card_id);
             if (action.type == ActionType::Play) {
                 const auto& card = *find_card(player.hand[action.src]);
-                if (enhance_payment(card, player.available_pp())) {
+                if (enhance_payment(card, player.available_pp()) &&
+                    !(card.kind == Kind::Follower && follower_fanfare_suppressed(player))) {
                     out << ",\"form\":\"enhance\"";
                 } else if (player.available_pp() < card_cost(card, player.hand_modifiers[action.src])) {
                     if (card.crystal_form) out << ",\"form\":\"crystal\"";
@@ -217,18 +218,25 @@ GameState actions_json(std::ostream& out, const GameState& initial, std::span<co
             out << '}';
         }
         if (action.selection) {
-            const bool hand = action.selection_in_hand || action.type != ActionType::Play;
+            const bool hand = !action.selection_on_enemy && (action.selection_in_hand || action.type != ActionType::Play);
+            const int target_seat = action.selection_on_enemy ? enemy : before.turn_player;
+            const auto& board_side = before.players[target_seat];
             out << ",\"targets\":[";
             bool separate = false;
-            for (int slot = 0; slot < (hand ? player.hand_count : player.board_count); ++slot) {
+            for (int slot = 0; slot < (hand ? player.hand_count : board_side.board_count); ++slot) {
                 if (!(action.selection & (1 << slot))) continue;
                 out << (separate ? ",{" : "{") << "\"kind\":\"" << (hand ? "hand" : "follower")
-                    << "\",\"seat\":" << 1 + before.turn_player << ",\"slot\":" << slot + 1 << ',';
-                card_fields(out, hand ? player.hand[slot] : player.board[slot].card_id);
+                    << "\",\"seat\":" << 1 + target_seat << ",\"slot\":" << slot + 1 << ',';
+                card_fields(out, hand ? player.hand[slot] : board_side.board[slot].card_id);
                 out << '}';
                 separate = true;
             }
             out << ']';
+        }
+        if (action.secondary_slot >= 0) {
+            out << ",\"discard\":{\"slot\":" << action.secondary_slot + 1 << ',';
+            card_fields(out, player.hand[action.secondary_slot]);
+            out << '}';
         }
         out << '}';
         comma = true;

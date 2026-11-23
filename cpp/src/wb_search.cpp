@@ -87,6 +87,7 @@ void encode_player(float* out, const GameState& state, int seat, const MatchupFe
         const auto remaining = static_cast<float>(std::max(1, p.deck_remaining()));
         out[117] = followers / remaining;
         out[118] = total_cost / (10.0F * remaining);
+        out[119] = static_cast<float>(p.attacked_leader_last_turn);
         return;
     }
     for (int i = 0; i < p.hand_count; ++i) {

@@ -11,14 +11,15 @@ SUPPLEMENTS = {"tokens": "missing_tokens", "crests": "crests", "forms": "special
 CUSTOM = {"EvolveWithAlly", "BanishLowestAndEvolve"}
 CREST_SOURCE_IDS = {"Testimony": 11063312, "Rituel": 10864122, "Rapid": 11064112}
 FLAGS = {"FLAG_WARD", "FLAG_STORM", "FLAG_RUSH", "kBane", "kBarrier", "kAura",
-         "kAmbush", "kIntimidate", "kAttackBlocked", "kDrain", "kDoubleStrike"}
+         "kAmbush", "kIntimidate", "kAttackBlocked", "kDrain", "kDoubleStrike", "kIgnoreWard"}
+EFFECT_FLAGS = {"kLoseLastWords", "kRebirthLastWords", "kDeadTrait"}
 EFFECT_FIELDS = {
     "trigger": "Trigger", "operation": "Operation", "target": "Target", "amount": int,
     "card": int, "health_modifier": int, "mode": int, "crest": "CrestId",
     "granted_abilities": FLAGS, "transformed_evolution": "Evolution",
     "condition": "Condition", "threshold": int, "handler": "CardHandler", "spellboost_multiplier": int,
     "filter": "DeckFilter",
-    "magnitude": "Magnitude", "cost_override": int, "alternate_card": int,
+    "magnitude": "Magnitude", "cost_override": int, "alternate_card": int, "effect_flags": EFFECT_FLAGS,
 }
 
 
@@ -92,10 +93,11 @@ def generate(directory):
     overlay = read(directory, "engine_cards.json")
     extension = read(directory, "phase5b1_cards.json")
     elf_royal = read(directory, "phase5b2_cards.json")
+    dragon_nightmare = read(directory, "phase5b3_cards.json")
     research = {row["special_effect_id"]: row for row in read(directory, "svwb_special_effect_research.json")["records"]}
-    if any(part["schema"] != 1 for part in (overlay, extension, elf_royal)):
+    if any(part["schema"] != 1 for part in (overlay, extension, elf_royal, dragon_nightmare)):
         raise ValueError("Unknown card engine schema version")
-    rules = overlay["cards"] + extension["cards"] + elf_royal["cards"]
+    rules = overlay["cards"] + extension["cards"] + elf_royal["cards"] + dragon_nightmare["cards"]
     forms = {row["source_card_id"]: row for row in research.values() if row["kind"] in ("crystallize", "accelerate")}
     for row in rules:
         if "base_card_id" in row:
@@ -109,7 +111,9 @@ def generate(directory):
     scope = {card["card_id"] for card in rotation if card["class"] in ("ニュートラル", "ビショップ")}
     elf = {card["card_id"] for card in rotation if card["class"] == "エルフ"}
     royal = {card["card_id"] for card in rotation if card["class"] == "ロイヤル"}
-    missing = (scope | elf | royal) - fixed.keys()
+    dragon = {card["card_id"] for card in rotation if card["class"] == "ドラゴン"}
+    nightmare = {card["card_id"] for card in rotation if card["class"] == "ナイトメア"}
+    missing = (scope | elf | royal | dragon | nightmare) - fixed.keys()
     if missing:
         raise ValueError(f"Missing rotation implementations: {sorted(missing)}")
     fixed_ids = {row["id"] for row in rules}
@@ -186,9 +190,12 @@ def generate(directory):
                 if record["kind"] != "faith":
                     raise ValueError(f"Invalid research faith {official}")
                 fields.append(f".faith_trigger={cpp(rules['faith_trigger'], 'Trigger')}")
+            for key, kind in {"modes_chosen": int, "banish_when_leaving": bool, "track_entries": bool}.items():
+                if key in rules:
+                    fields.append(f".{key}={cpp(rules[key], kind)}")
         out.append("    {" + ", ".join(fields) + "},")
     out.append("};\nconstexpr CrestDef crests[]{")
-    for row in overlay["crests"] + extension["crests"] + elf_royal["crests"]:
+    for row in overlay["crests"] + extension["crests"] + elf_royal["crests"] + dragon_nightmare["crests"]:
         record = research[row.get("special_effect_id", CREST_SOURCE_IDS.get(row["id"]))]
         out.append(f"    {{{cpp(row['id'], 'CrestId')}, {cpp(record['countdown'] or 0, int)}, "
                    f"{cpp(row['clock'], 'CrestClock')}, {effect_list(row['effects'], ids, implemented)}, "
@@ -196,7 +203,8 @@ def generate(directory):
     out.append("};\nconstexpr OfficialCard official_cards[]{")
     out.extend(f"    {{{official}, {id}}}," for official, id in sorted(ids.items()))
     out.append("};")
-    for name, group in (("rotation_batch", scope), ("rotation_elf", elf), ("rotation_royal", royal)):
+    for name, group in (("rotation_batch", scope), ("rotation_elf", elf), ("rotation_royal", royal),
+                        ("rotation_dragon", dragon), ("rotation_nightmare", nightmare)):
         out.append(f"constexpr CardId {name}[]{{" + ", ".join(str(ids[id]) for id in sorted(group)) + "};")
     return "\n".join(out)
 

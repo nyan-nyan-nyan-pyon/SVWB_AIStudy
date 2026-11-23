@@ -1907,6 +1907,340 @@ int elf_royal_units() {
     }
 }
 
+void dragon_nightmare_cards() {
+    CHECK(dragon_rotation().size() == 58 && nightmare_rotation().size() == 61);
+    for (const auto group : {dragon_rotation(), nightmare_rotation()}) {
+        for (const auto id : group) {
+            const auto& card = *find_card(id);
+            try {
+                CHECK(is_deck_card(id) && official(card.official_id) == id && printed_card(id) == id);
+                Deck deck{};
+                deck[0] = id;
+                auto others = std::views::filter(group, [id](CardId entry) { return entry != id; });
+                std::copy_n(others.begin(), kDeckSize - 1, deck.begin() + 1);
+                const auto fresh = new_game(deck, deck, card.official_id);
+                CHECK(fresh.players[0].deck_end == kDeckSize && fresh.players[0].hand_count == 4);
+                Scenario s;
+                s.place(kWingedStatue);
+                s.place(kTrainer);
+                s.place(kLilium);
+                s.place(kTrainer, 1);
+                s.place(kLilium, 1);
+                s.hand({id, kRapid, kPropagation, kEvidence});
+                s.player().leader_hp = 12;
+                s.player().shadows = 5;
+                const auto choices = legal_actions(s.state);
+                const auto action = std::find_if(choices.begin(), choices.end(), [](Action move) {
+                    return move.type == Play && move.src == 0;
+                });
+                CHECK(action != choices.end());
+                s.run(*action);
+                CHECK(s.state.outcome == Outcome::Ongoing && s.player().plays_this_turn == 1);
+                if (card.kind != Kind::Spell) {
+                    CHECK(std::any_of(s.player().board.begin(), s.player().board.begin() + s.player().board_count,
+                                      [id](const auto& object) { return object.card_id == id; }));
+                }
+                std::cout << "PASS dragon_nightmare_card " << card.official_id << '\n';
+            } catch (const std::exception& error) {
+                throw std::runtime_error(std::to_string(card.official_id) + " " + std::string(card.name) + ": " + error.what());
+            }
+        }
+    }
+}
+
+void dragon_nightmare_rulings() {
+    Scenario miltio;
+    const auto soldier = official(10621110);
+    miltio.crest(CrestId::Miltio, 0);
+    miltio.hand({soldier, official(10642110), kTrainer});
+    miltio.player().pp = 4;
+    miltio.run({Play, 0});
+    CHECK(miltio.player().pp == 2 && miltio.player().board[0].evolution == Evolution::Normal &&
+          miltio.player().board[0].atk == 4 && miltio.player().board[0].hp == 4);
+    miltio.player().pp = 10;
+    miltio.reject({Play, 0, kOwnHandTarget + 1});
+    miltio.run({Play, 0});
+    CHECK(miltio.player().hand_count == 1 && miltio.player().hand[0] == kTrainer &&
+          miltio.player().board[1].evolution == Evolution::Normal);
+    const auto cannon = official(10941310);
+    miltio.place(kCorrector, 1);
+    miltio.hand({cannon});
+    miltio.run({Play, 0});
+    CHECK(miltio.player(1).board[0].hp == 2); // Spell Enhance still works.
+
+    Scenario gremory;
+    const auto card = official(11054120);
+    const auto target = gremory.place(card).creation_order;
+    gremory.player().shadows = 1;
+    constexpr Effect destroy{.operation=Operation::Destroy, .target=Target::Self};
+    resolve_effect_steps(gremory.state, 0, std::array{destroy}, target);
+    CHECK(gremory.player().board_count == 0 && gremory.player().shadows == 0 && gremory.player().hand_count == 1);
+    gremory.place(card);
+    gremory.run({Evolve, 0});
+    CHECK(gremory.player().crests[0].id == CrestId::Gremory);
+    gremory.run({EndTurn});
+    CHECK(gremory.player().shadows == 2);
+
+    Scenario drake;
+    auto& p = drake.player();
+    drake.hand({official(10952110)});
+    p.pp = 2;
+    drake.run({Play, 0});
+    const auto crystal = official(10952112);
+    CHECK(p.board[0].card_id == crystal && p.board[0].countdown == 4 &&
+          p.pp == 0 && !is_deck_card(crystal) && printed_card(crystal) == official(10952110));
+    for (int count = 3; count >= 1; --count) {
+        drake.next_own_turn();
+        CHECK(p.board[0].card_id == crystal && p.board[0].countdown == count);
+    }
+    drake.next_own_turn();
+    CHECK(p.board[0].card_id == official(10952110) && (p.board[0].abilities & FLAG_WARD));
+}
+
+void dragon_discard_and_deck_changes() {
+    const auto val = official(10644120);
+    Scenario discard;
+    const auto red = official(10642310);
+    discard.hand({val, red});
+    discard.place(kTrainer, 1);
+    discard.reject({Play, 1, 0});
+    discard.run({Play, 1, 0, 0, 0, false, false, 0});
+    CHECK(discard.player().shadows == 2 && discard.player().board[0].card_id == val &&
+          discard.player(1).board_count == 0);
+    discard.run({SuperEvolve, 0});
+    const auto abyss = official(90044330);
+    CHECK(discard.player().hand_count == 3 &&
+          std::all_of(discard.player().hand.begin(), discard.player().hand.begin() + 3, [abyss](auto id) { return id == abyss; }));
+    discard.player().leader_hp = 14;
+    discard.hand({official(10641110), abyss});
+    discard.run({Play, 0, kOwnHandTarget + 1});
+    CHECK(discard.player().leader_hp == 15 && discard.player(1).leader_hp == 19);
+
+    Scenario blades;
+    const auto giver = official(10641310);
+    const auto knife = official(10643310);
+    const auto warrior = official(10642110);
+    auto& p = blades.player();
+    for (const auto [source, cost, expected] : std::array<std::tuple<CardId,int,int>, 3>{{{giver,4,2},{knife,7,5},{knife,5,3}}}) {
+        blades.hand({warrior, source});
+        p.hand_modifiers[1].cost = static_cast<std::int8_t>(cost - find_card(source)->cost);
+        p.pp = 10;
+        blades.run({Play, 0, kOwnHandTarget + 1});
+        CHECK(p.hand_count == 1 && p.hand[0] == source && card_cost(*find_card(source), p.hand_modifiers[0]) == expected);
+    }
+
+    Scenario transform;
+    auto& side = transform.player();
+    const auto glance = official(10741310);
+    const auto sleep = official(10742310);
+    transform.hand({glance, glance, kRapid});
+    side.deck[side.deck_idx] = glance;
+    side.deck_modifiers[side.deck_idx].cost = -2;
+    side.hand_modifiers[1].cost = -1;
+    side.max_pp = side.pp = 9;
+    transform.run({Play, 0});
+    CHECK(side.max_pp == 10 && side.hand[0] == sleep && side.deck[side.deck_idx] == sleep &&
+          side.hand_modifiers[0].cost == 0 && side.deck_modifiers[side.deck_idx].cost == 0);
+
+    Scenario exile;
+    auto& deck = exile.player();
+    deck.deck_idx = 0;
+    deck.deck_end = 4;
+    deck.deck = {kWingedStatue, kLilium, kTrainer, kRapid};
+    exile.place(official(10543110));
+    exile.place(kLilium, 1);
+    exile.place(kCorrector, 1);
+    exile.run({SuperEvolve, 0});
+    CHECK(deck.deck_remaining() == 2 && deck.deck[0] == kLilium && deck.deck[1] == kRapid && deck.shadows == 0);
+    CHECK(exile.player(1).board_count == 1 && exile.player(1).board[0].hp == 4);
+}
+
+void dragon_attack_modes_and_crests() {
+    Scenario previous;
+    auto& p = previous.player();
+    const auto thief = official(10941110);
+    previous.place(kHolyFalcon);
+    previous.run({Attack, 0, kEnemyLeader});
+    CHECK(p.attacked_leader_this_turn && !p.attacked_leader_last_turn);
+    previous.next_own_turn();
+    CHECK(!p.attacked_leader_this_turn && p.attacked_leader_last_turn);
+    previous.hand({thief, official(10944110)});
+    previous.run({Play, 0});
+    CHECK(p.board[1].abilities & FLAG_STORM);
+    previous.place(kColette, 1);
+    previous.run({Play, 0});
+    CHECK(p.board[2].abilities & FLAG_STORM);
+    CHECK(previous.legal({Attack, 2, kEnemyLeader}) && !previous.legal({Attack, 1, kEnemyLeader}));
+
+    Scenario modes;
+    const auto four_modes = official(11043310);
+    modes.hand({four_modes});
+    modes.place(kCorrector, 1);
+    const auto choices = legal_actions(modes.state);
+    CHECK(std::count_if(choices.begin(), choices.end(), [](Action action) { return action.type == Play; }) == 6);
+    modes.run({Play, 0, kNoTarget, kModeMask | 0b1100});
+    CHECK(modes.player().hand_count == 3 && modes.player().hand[0] == kEvidence &&
+          modes.player(1).board[0].hp == 1 && modes.player().board_count == 0);
+
+    Scenario two_targets;
+    two_targets.place(official(10541110));
+    two_targets.place(kCorrector, 1);
+    two_targets.place(kTrainer, 1);
+    two_targets.place(kLilium, 1);
+    two_targets.reject({SuperEvolve, 0, 0});
+    two_targets.run({SuperEvolve, 0, kNoTarget, 0, 0b110, false, true});
+    CHECK(two_targets.player(1).board_count == 1 && two_targets.player(1).board[0].card_id == kCorrector);
+
+    Scenario waves;
+    const auto orca = official(90041130);
+    waves.crest(CrestId::Yube, 0);
+    waves.crest(CrestId::Wadatsumi, 0);
+    waves.hand({orca, orca});
+    waves.run({Play, 0});
+    waves.run({Play, 0});
+    CHECK(waves.player().board[0].atk == 3 && waves.player().board[1].hp == 3);
+    waves.place(kCorrector, 1).atk = 0;
+    waves.run({Attack, 0, 0});
+    waves.run({Attack, 1, 0});
+    CHECK(waves.player().hand_count == 1 && waves.player().hand[0] == orca &&
+          waves.player().board[0].atk == 4 && waves.player().board[1].atk == 4);
+    waves.run({EndTurn});
+    CHECK(waves.player().board[0].atk == 3 && waves.player().board[1].atk == 3);
+
+    Scenario reflection;
+    const auto duo = official(10844110);
+    for (int i = 0; i < 3; ++i) {
+        reflection.hand({duo});
+        reflection.player().pp = 10;
+        reflection.run({Play, 0});
+        CHECK(reflection.player().board[i].atk == 4 + i + (i == 2 ? 2 : 0));
+    }
+    const auto target = reflection.player().board[0].creation_order;
+    constexpr Effect destroy{.operation=Operation::Destroy, .target=Target::Self};
+    resolve_effect_steps(reflection.state, 0, std::array{destroy}, target);
+    CHECK(reflection.player().crests[0].id == CrestId::Reflection && reflection.player().crests[0].countdown == 2);
+    reflection.next_own_turn();
+    reflection.next_own_turn();
+    CHECK(reflection.player().hand[1] == duo && reflection.player().hand_modifiers[1].cost == -2);
+}
+
+void nightmare_banish_last_words_and_reanimate() {
+    const auto ghost = official(90051130);
+    const auto skeleton = official(90051110);
+    constexpr Effect destroy{.operation=Operation::Destroy, .target=Target::Self};
+    Scenario dead;
+    dead.place(official(11052110));
+    dead.place(official(11054110));
+    dead.place(official(11053110));
+    dead.place(skeleton);
+    const auto spirit = dead.place(ghost).creation_order;
+    dead.player().leader_hp = 12;
+    resolve_effect_steps(dead.state, 0, std::array{destroy}, spirit);
+    CHECK(dead.player().shadows == 0 && dead.player().leader_hp == 14 && dead.player().board_count == 5 &&
+          dead.player().board[3].atk == 3 && dead.player().board[4].card_id == skeleton &&
+          dead.player().board[4].hp == 5 && (dead.player().board[4].abilities & FLAG_WARD));
+    Scenario bounce;
+    const auto ghost_target = bounce.place(ghost).creation_order;
+    constexpr Effect bounce_self{.operation=Operation::Bounce, .target=Target::Self};
+    resolve_effect_steps(bounce.state, 0, std::array{bounce_self}, ghost_target);
+    CHECK(bounce.player().hand_count == 0 && bounce.player().board_count == 0 && bounce.player().shadows == 0);
+    bounce.place(ghost);
+    bounce.run({EndTurn});
+    CHECK(bounce.player().board_count == 0 && bounce.player().shadows == 0);
+
+    for (const auto id : {official(10951120), official(90051140)}) {
+        Scenario lost;
+        const auto body = lost.place(id).creation_order;
+        resolve_effect_steps(lost.state, 0, std::array{destroy}, body);
+        CHECK(lost.player().board_count == 1 && lost.player().board[0].card_id == id &&
+              (lost.player().board[0].modifiers.effect_flags & kLoseLastWords));
+        resolve_effect_steps(lost.state, 0, std::array{destroy}, lost.player().board[0].creation_order);
+        CHECK(lost.player().board_count == 0 && lost.player().shadows == 2);
+    }
+    Scenario grant;
+    const auto victim = grant.place(kTrainer).creation_order;
+    grant.hand({official(10953310)});
+    grant.run({Play, 0, kOwnBoardTarget});
+    resolve_effect_steps(grant.state, 0, std::array{destroy}, victim);
+    CHECK(grant.player().board_count == 1 && grant.player().board[0].card_id == kTrainer &&
+          !(grant.player().board[0].modifiers.effect_flags & kRebirthLastWords));
+
+    Scenario reanimation;
+    const auto old_one = reanimation.place(kExias).creation_order;
+    const auto old_two = reanimation.place(kLilium).creation_order;
+    resolve_effect_steps(reanimation.state, 0, std::array{destroy}, old_one);
+    resolve_effect_steps(reanimation.state, 0, std::array{destroy}, old_two);
+    reanimation.hand({official(10954110)});
+    reanimation.run({Play, 0});
+    CHECK(reanimation.player().board_count == 4);
+    CHECK(std::all_of(reanimation.player().board.begin() + 1, reanimation.player().board.begin() + 4,
+        [](const auto& follower) { return follower.modifiers.effect_flags & kDeadTrait; }));
+    reanimation.run({SuperEvolve, 0});
+    CHECK(reanimation.player().crests[0].id == CrestId::IstenDead);
+    reanimation.place(kLilium);
+    reanimation.place(kTrainer, 1);
+    reanimation.run({EndTurn});
+    CHECK(reanimation.player(1).board_count == 0);
+
+    Scenario mixed_cost;
+    const auto expensive = mixed_cost.place(kTrainer).creation_order;
+    const auto cheap = mixed_cost.place(kLilium).creation_order;
+    resolve_effect_steps(mixed_cost.state, 0, std::array{destroy}, expensive);
+    resolve_effect_steps(mixed_cost.state, 0, std::array{destroy}, cheap);
+    mixed_cost.hand({official(10554110)});
+    mixed_cost.run({Play, 0});
+    CHECK(mixed_cost.player().board_count == 3 && mixed_cost.player().board[1].card_id == kTrainer &&
+          mixed_cost.player().board[2].card_id == kLilium);
+
+    Scenario steal;
+    steal.place(kTrainer, 1).hp = 1;
+    steal.hand({official(10652310)});
+    steal.run({Play, 0, 0});
+    CHECK(steal.player(1).board_count == 0 && steal.player(1).shadows == 0 &&
+          steal.player().board[0].card_id == kTrainer && steal.player().board[0].hp == 1);
+}
+
+void dragon_nightmare_extras() {
+    for (const auto [id, code, cd] : std::array<std::tuple<CrestId, std::uint32_t, int>, 7>{{
+          {CrestId::Yube,10544122,0},{CrestId::Wadatsumi,10841132,0},{CrestId::Reflection,10844112,2},
+          {CrestId::Okuyoka,10553312,2},{CrestId::Miltio,10554112,0},{CrestId::IstenDead,10954112,0},{CrestId::Gremory,11054122,0}}}) {
+        const auto* crest = find_crest(id);
+        CHECK(crest && crest->official_id == code && crest->countdown == cd);
+    }
+    Scenario flower;
+    flower.hand({official(10553310), kTrainer, kTrainer, kTrainer, kTrainer});
+    flower.run({Play, 0});
+    flower.run({EndTurn});
+    CHECK(flower.player().board[0].card_id == official(90051110) && flower.player().hand_count == 5 &&
+          (flower.player().board[0].abilities & FLAG_WARD));
+    for (const auto code : {90041110U,90041120U,90041130U,90044330U,90051110U,90051120U,90051130U,90051140U,90054330U}) {
+        const auto id = official(code);
+        CHECK(!is_deck_card(id));
+        Scenario s;
+        s.hand({id});
+        s.run({Play, 0});
+        const auto& card = *find_card(id);
+        if (card.kind == Kind::Spell) CHECK(s.player().shadows == 1);
+        else CHECK(s.player().board[0].card_id == id && s.player().board[0].hp == card.hp);
+    }
+}
+
+int dragon_nightmare_units() {
+    try {
+        dragon_nightmare_cards();
+        dragon_nightmare_rulings();
+        dragon_discard_and_deck_changes();
+        dragon_attack_modes_and_crests();
+        nightmare_banish_last_words_and_reanimate();
+        dragon_nightmare_extras();
+        std::cout << "PASS dragon_nightmare card cases=119 token cases=9 crests=7 crystallize=1 official_QA=2\n";
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+}
+
 void validate_rotation(const GameState& state) {
     CHECK(state.turn_player < 2 && state.turn_number >= 1 && state.turn_number <= kTurnLimit);
     std::array<EntityId, 4 * kBoardLimit> orders{};
@@ -2048,6 +2382,12 @@ int main(int argc, char** argv) {
         return stress_with_neutral(elf_rotation(), 0x454c46ULL, "elf_neutral_mirror");
     if (argc == 2 && std::string_view(argv[1]) == "--royal-stress")
         return stress_with_neutral(royal_rotation(), 0x524f59414cULL, "royal_neutral_mirror");
-    std::cerr << "Usage: test_wb [--stress|--rotation-unit|--rotation-stress|--elf-royal-unit|--elf-stress|--royal-stress]\n";
+    if (argc == 2 && std::string_view(argv[1]) == "--dragon-nightmare-unit") return dragon_nightmare_units();
+    if (argc == 2 && std::string_view(argv[1]) == "--dragon-stress")
+        return stress_with_neutral(dragon_rotation(), 0x445241474f4eULL, "dragon_neutral_mirror");
+    if (argc == 2 && std::string_view(argv[1]) == "--nightmare-stress")
+        return stress_with_neutral(nightmare_rotation(), 0x4e49474854ULL, "nightmare_neutral_mirror");
+    std::cerr << "Usage: test_wb [--stress|--rotation-unit|--rotation-stress|--elf-royal-unit|--elf-stress|--royal-stress"
+                 "|--dragon-nightmare-unit|--dragon-stress|--nightmare-stress]\n";
     return 2;
 }
