@@ -104,6 +104,26 @@ def verify_cli(exe, directory, games):
         raise ValueError("Time-limited CLI did not complete any games")
     print("PASS CLI weight loading, time and game limits")
 
+    for opponent in (["--random-opponent"], ["--opponent-weights", weights]):
+        common = [exe, "--evaluate", "--weights", weights, *opponent,
+                  "--games", "4", "--simulations", "4", "--seed", "731"]
+        summaries = []
+        for threads in ("1", "2"):
+            evaluation = subprocess.run(
+                [*common, "--threads", threads],
+                check=True, capture_output=True, text=True, timeout=15,
+            )
+            if "mode=evaluate" not in evaluation.stdout:
+                raise ValueError("CLI did not report evaluation mode")
+            summary = re.search(r"A_first=2 A_second=2 A_wins=(\d+) B_wins=(\d+) draws=(\d+)",
+                                evaluation.stdout)
+            if summary is None or sum(map(int, summary.groups())) != 4:
+                raise ValueError("Evaluation has incorrect seat or result counts")
+            summaries.append(summary.groups())
+        if summaries[0] != summaries[1]:
+            raise ValueError("Evaluation results changed when the thread count changed")
+    print("PASS seat-balanced, seeded evaluation against random moves and another model")
+
 
 def main():
     parser = argparse.ArgumentParser()

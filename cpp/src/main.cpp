@@ -37,6 +37,8 @@ struct Options {
     std::filesystem::path weights;
     std::filesystem::path opponent_weights;
     std::filesystem::path log_dir;
+    bool evaluate = false;
+    bool random_opponent = false;
     SearchOptions search;
 };
 
@@ -45,6 +47,9 @@ void usage(std::ostream& out) {
            "               [--deck-a A|B] [--deck-b A|B] [--weights FILE]\n"
            "               [--opponent-weights FILE | --opponent-seed N]\n"
            "               [--simulations N] [--no-exploration] [--log-dir DIR]\n"
+           "               [--evaluate [--random-opponent]]\n"
+           "Evaluation uses greedy selection and no search noise. --random-opponent\n"
+           "samples uniformly from all legal actions, including end turn.\n"
            "Starts at most N games, or stops starting games after N seconds, whichever comes first.\n"
            "Games in progress finish. Seats alternate between the two competitors.\n"
            "Without a game or time limit, runs one game. Without weights, uses seeded random weights.\n";
@@ -79,6 +84,15 @@ Options parse_options(int argc, char** argv) {
             options.search.exploration = false;
             continue;
         }
+        if (flag == "--evaluate") {
+            options.evaluate = true;
+            options.search.exploration = false;
+            continue;
+        }
+        if (flag == "--random-opponent") {
+            options.random_opponent = true;
+            continue;
+        }
         if (i + 1 == argc || std::string_view(argv[i + 1]).starts_with("--")) {
             throw std::invalid_argument("Missing value for " + std::string(flag));
         }
@@ -111,6 +125,10 @@ Options parse_options(int argc, char** argv) {
     }
     if (options.opponent_seed && !options.opponent_weights.empty()) {
         throw std::invalid_argument("--opponent-seed and --opponent-weights are mutually exclusive");
+    }
+    if (options.random_opponent && (!options.evaluate || options.opponent_seed ||
+                                    !options.opponent_weights.empty() || !options.log_dir.empty())) {
+        throw std::invalid_argument("Use --random-opponent only with --evaluate, without opponent weights or training logs");
     }
     if (options.games == 0 && options.seconds == 0) {
         options.games = 1;
@@ -191,9 +209,23 @@ struct GameResult {
     double elapsed;
 };
 
+void play_random_turn(GameState& state, std::mt19937& rng) {
+    const auto actor = state.turn_player;
+    int actions_taken = 0;
+    while (state.winner == kOngoing && state.turn_player == actor) {
+        if (++actions_taken > 2 * kBeamSteps) {
+            throw std::logic_error("Random turn exceeded the action limit");
+        }
+        const auto actions = legal_actions(state);
+        const auto selected = std::uniform_int_distribution<std::size_t>(0, actions.size() - 1)(rng);
+        apply_legal_action(state, actions[selected]);
+    }
+}
+
 GameResult play_game(const Options& options, const Mlp& a, const Mlp& b, std::uint64_t game_id) {
     const auto started = Clock::now();
     const bool a_first = game_id % 2 == 0;
+    const int a_seat = a_first ? 0 : 1;
     std::seed_seq seeds{options.seed, static_cast<std::uint32_t>(game_id),
                         static_cast<std::uint32_t>(game_id >> 32)};
     std::mt19937 rng(seeds);
@@ -206,6 +238,11 @@ GameResult play_game(const Options& options, const Mlp& a, const Mlp& b, std::ui
     while (state.winner == kOngoing) {
         if (result.turns >= 2 * (kDeckSize - kOpeningHand + 1)) {
             throw std::logic_error("Turn limit exceeded in game " + std::to_string(game_id));
+        }
+        if (options.random_opponent && state.turn_player != a_seat) {
+            play_random_turn(state, rng);
+            ++result.turns;
+            continue;
         }
         if (logging) {
             result.log.values.push_back({extract_features(state), 0.0F});
@@ -307,7 +344,8 @@ void run(const Options& options) {
     const double elapsed = std::chrono::duration<double>(Clock::now() - started).count();
     const auto games = static_cast<double>(stats.games);
     std::cout << "games=" << stats.games << " threads=" << threads << " turns=" << stats.turns
-              << " seed=" << options.seed << " simulations=" << options.search.simulations << '\n'
+              << " seed=" << options.seed << " simulations=" << options.search.simulations
+              << " mode=" << (options.evaluate ? "evaluate" : "selfplay") << '\n'
               << "A_first=" << stats.a_first << " A_second=" << stats.games - stats.a_first
               << " A_wins=" << stats.a_wins << " B_wins=" << stats.b_wins << " draws=" << stats.draws << '\n'
               << std::fixed << std::setprecision(4)

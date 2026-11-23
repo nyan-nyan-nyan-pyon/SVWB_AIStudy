@@ -184,7 +184,7 @@ void TurnSearch::expand(Node& node, std::size_t width) {
     std::partial_sort(order.begin(), order.begin() + ranked, order.end(), [&](std::size_t a, std::size_t b) {
         return scores[a] != scores[b] ? scores[a] > scores[b] : a < b;
     });
-    const auto selected = std::min(candidates.size(), ranked + kRandomCandidates);
+    const auto selected = options_.exploration ? std::min(candidates.size(), ranked + kRandomCandidates) : ranked;
     for (auto i = ranked; i < selected; ++i) {
         const auto pick = std::uniform_int_distribution<std::size_t>(i, order.size() - 1)(rng_);
         std::swap(order[i], order[pick]);
