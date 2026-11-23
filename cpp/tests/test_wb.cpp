@@ -6,10 +6,12 @@
 #include <initializer_list>
 #include <iostream>
 #include <random>
+#include <ranges>
 #include <source_location>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 
 namespace {
@@ -17,6 +19,7 @@ namespace {
 using namespace svwb::wb;
 using enum ActionType;
 using svwb::CardId;
+using svwb::Deck;
 using svwb::FLAG_RUSH;
 using svwb::FLAG_STORM;
 using svwb::FLAG_WARD;
@@ -1195,6 +1198,495 @@ int stress() {
     return 0;
 }
 
+CardId official(std::uint32_t id) {
+    const auto* card = find_official_card(id);
+    CHECK(card && card->implemented);
+    return card->id;
+}
+
+void all_rotation_cards() {
+    const auto cards = neutral_bishop_rotation();
+    CHECK(cards.size() == 101);
+    int neutral = 0;
+    int bishop = 0;
+    for (const auto id : cards) {
+        const auto& card = *find_card(id);
+        try {
+            CHECK(is_deck_card(id));
+            CHECK(official(card.official_id) == id && printed_card(id) == id);
+            neutral += card.class_name == "ニュートラル";
+            bishop += card.class_name == "ビショップ";
+            // Verify every printed card is accepted by the same deck loader rules used in a live game.
+            Deck deck{};
+            deck[0] = id;
+            std::copy_n(std::views::filter(cards, [id](CardId item) { return item != id; }).begin(), kDeckSize - 1,
+                        deck.begin() + 1);
+            const auto opening = new_game(deck, deck, card.official_id);
+            CHECK(std::find(opening.players[0].deck.begin(), opening.players[0].deck.begin() + kDeckSize, id) !=
+                  opening.players[0].deck.begin() + kDeckSize);
+
+            Scenario s;
+            s.place(kWingedStatue);
+            s.place(kTrainer);
+            s.place(kLilium).evolution = Evolution::Normal;
+            s.place(kHolyFalcon, 1);
+            s.hand({id, kTrainer, kRapid, kEvidence, kColette});
+            s.player().leader_hp = 10;
+            const auto legal = legal_actions(s.state);
+            const auto action = std::find_if(legal.begin(), legal.end(), [](const auto& move) {
+                return move.type == Play && move.src == 0;
+            });
+            CHECK(action != legal.end());
+            s.run(*action);
+            CHECK(s.state.outcome == Outcome::Ongoing && s.player().plays_this_turn == 1);
+            CHECK(s.player().hand_count <= kHandLimit && s.player().board_count <= kBoardLimit);
+            CHECK(s.player().pp <= 10 - (card.enhance_cost ? card.enhance_cost : card.cost)
+                  || card.official_id == 10663210); // The book can refund PP.
+            if (card.kind != Kind::Spell) {
+                const bool found = std::any_of(s.player().board.begin(), s.player().board.begin() + s.player().board_count,
+                    [id](const auto& object) { return object.card_id == id; });
+                CHECK(found);
+            } else {
+                CHECK(s.player().shadows >= 1);
+            }
+            std::cout << "PASS rotation_card " << card.official_id << '\n';
+        } catch (const std::exception& error) {
+            throw std::runtime_error(std::to_string(card.official_id) + " " + std::string(card.name) + ": " + error.what());
+        }
+    }
+    CHECK(neutral == 41 && bishop == 60);
+}
+
+void rotation_forms_and_tokens() {
+    struct Form {
+        std::uint32_t base;
+        std::uint32_t crystal;
+        int cost;
+    };
+    for (const auto [base, crystal, cost] : std::array<Form, 4>{{
+            {10962120, 10962122, 1}, {10661110, 10661112, 2}, {10662110, 10662112, 1}, {10663110, 10663112, 1}}}) {
+        Scenario s;
+        s.hand({official(base)});
+        s.player().leader_hp = 10;
+        s.player().pp = static_cast<std::uint8_t>(cost);
+        s.run({Play, 0});
+        const auto form = official(crystal);
+        CHECK(s.player().pp == 0 && s.player().board[0].card_id == form &&
+              s.player().board[0].countdown == 3 && printed_card(form) == official(base));
+        CHECK(!is_deck_card(form) && find_card(form)->act_cost == (base == 10962120 ? 1 : -1));
+        s.next_own_turn();
+        CHECK(s.player().board[0].countdown == 2);
+        if (base == 10962120) {
+            s.run({Act, 0});
+            CHECK(s.player().board[0].countdown == 1);
+        } else {
+            s.next_own_turn();
+            CHECK(s.player().board[0].countdown == 1);
+        }
+        s.next_own_turn();
+        CHECK(s.player().board_count == 1 && s.player().board[0].card_id == official(base));
+        CHECK(s.player().board[0].evolution == Evolution::None && s.player().shadows == 1);
+        CHECK(s.player().leader_hp == (base == 10661110 ? 12 : 10));
+    }
+    Scenario accelerate;
+    accelerate.hand({official(10901110)});
+    accelerate.place(kTrainer, 1);
+    accelerate.player().pp = 1;
+    const auto form = official(10901112);
+    CHECK(printed_card(form) == official(10901110) && find_card(form)->kind == Kind::Spell && !is_deck_card(form));
+    accelerate.run({Play, 0});
+    CHECK(accelerate.player().board_count == 0 && accelerate.player().pp == 0 &&
+          accelerate.player().shadows == 1 && accelerate.player(1).board[0].hp == 1);
+
+    Scenario tiger;
+    tiger.hand({official(10961210)});
+    tiger.run({Play, 0});
+    tiger.run({Act, 0});
+    const auto& token = tiger.player().board[0];
+    CHECK(token.card_id == official(90061120) && token.atk == 4 && token.hp == 4 && (token.abilities & FLAG_RUSH));
+    CHECK(!is_deck_card(token.card_id));
+    const auto fox = official(10061120);
+    CHECK(find_card(fox)->abilities & FLAG_WARD);
+    CHECK(official(90001210) == kEvidence && official(90061110) == kHolyFalcon &&
+          official(90061130) == kSplendidHawk && official(90061140) == kRabbit);
+}
+
+void rotation_crests() {
+    using enum CrestId;
+    for (const auto [id, code, cd] : std::array<std::tuple<CrestId, std::uint32_t, int>, 7>{{
+             {Testimony, 11063312, 2}, {Rituel, 10864122, 1}, {Rapid, 11064112, 1},
+             {Haylem, 10704112, 2}, {Erralde, 10964112, 0}, {Kukishiro, 10564122, 0}, {Sisters, 10864112, 0}}}) {
+        const auto* crest = find_crest(id);
+        CHECK(crest && crest->official_id == code && crest->countdown == cd && !crest->name.empty());
+    }
+    Scenario honey;
+    const auto haylem = official(10704110);
+    honey.place(haylem).atk = 0;
+    honey.place(kTrainer, 1);
+    honey.run({Attack, 0, 0});
+    CHECK(honey.player().board_count == 1 && honey.player(1).board[0].banish_at_end);
+    honey.run({EndTurn});
+    honey.reject({Attack, 0, kEnemyLeader});
+    honey.run({EndTurn});
+    CHECK(honey.player(1).board_count == 0 && honey.player(1).shadows == 0);
+    honey.place(kProjectedStatue, 1);
+    honey.place(kTrainer, 1).atk = 20;
+    honey.state.turn_player = 1;
+    honey.run({Attack, 1, 0});
+    CHECK(honey.player().crest_count == 1 && honey.player().crests[0].id == Haylem);
+    honey.run({EndTurn});
+    CHECK(honey.player().crest_count == 1 && honey.player().crests[0].countdown == 1);
+    honey.next_own_turn();
+    CHECK(honey.player().crest_count == 0 && honey.player().board[0].card_id == haylem &&
+          honey.player().board[0].evolution == Evolution::Normal);
+
+    Scenario erralde;
+    erralde.player().leader_hp = 15;
+    erralde.place(official(10964110));
+    erralde.run({Evolve, 0});
+    CHECK(erralde.player().crests[0].id == Erralde);
+    erralde.next_own_turn();
+    CHECK(erralde.player().leader_hp == 16 && erralde.player(1).leader_hp == 19 &&
+          erralde.player().crests[0].countdown == 0);
+
+    Scenario kukishiro;
+    kukishiro.crest(Kukishiro, 0);
+    auto& side = kukishiro.player();
+    side.deck[side.deck_idx] = kWingedStatue;
+    side.deck[side.deck_idx + 1] = kLilium;
+    side.deck[side.deck_idx + 2] = kWingedStatue;
+    kukishiro.next_own_turn();
+    CHECK(side.board_count == 1 && kukishiro.player(1).board_count == 0);
+    kukishiro.next_own_turn();
+    CHECK(side.board_count == 1 && kukishiro.player(1).board_count == 1);
+    kukishiro.hand({kExias, kExias, kExias, kExias, kExias, kExias, kExias, kExias, kExias});
+    kukishiro.next_own_turn();
+    CHECK(side.board_count == 1 && kukishiro.player(1).board_count == 1 &&
+          side.shadows == 1 && side.hand_count == 9);
+
+    Scenario sisters;
+    const auto card = official(10864110);
+    sisters.place(card);
+    sisters.hand({official(10862120)});
+    sisters.place(kTrainer, 1);
+    sisters.run({SuperEvolve, 0});
+    CHECK(sisters.player().crests[0].id == Sisters && sisters.player().hand_modifiers[0].cost == -3);
+    sisters.run({Attack, 0, 0});
+    CHECK(sisters.player().board[0].abilities & kDoubleStrike);
+    sisters.run({Attack, 0, kEnemyLeader});
+    sisters.reject({Attack, 0, kEnemyLeader});
+    sisters.next_own_turn();
+    CHECK(!(sisters.player().board[0].abilities & kDoubleStrike) &&
+          sisters.player().crests[0].id == Sisters);
+    sisters.run({Attack, 0, kEnemyLeader});
+    sisters.reject({Attack, 0, kEnemyLeader});
+
+    Scenario deck_summon;
+    auto& deck = deck_summon.player();
+    std::fill(deck.deck.begin() + deck.deck_idx, deck.deck.begin() + deck.deck_end, kRapid);
+    deck.deck[deck.deck_idx + 1] = official(10661110);
+    deck.deck_modifiers[deck.deck_idx + 1].cost = -3;
+    CHECK(card_cost(*find_card(official(10661110)), deck.deck_modifiers[deck.deck_idx + 1]) <= 2);
+    deck_summon.hand({card, official(10862120)});
+    deck_summon.player().leader_hp = 12;
+    deck_summon.run({Play, 0});
+    CHECK(deck.board_count == 2 && deck.board[1].card_id == official(10661110) &&
+          deck.board[1].evolution == Evolution::Super && deck.leader_hp == 14);
+    CHECK(deck.hand_modifiers[0].cost == -3 && deck.crest_count == 0 && !deck.manual_evolved);
+}
+
+void rotation_sequences() {
+    Scenario city;
+    city.hand({official(10703210), kTrainer, kRapid});
+    city.place(kTrainer, 1);
+    city.player().leader_hp = 15;
+    city.run({Play, 0});
+    CHECK(city.player().board[0].countdown == 1);
+    city.run({Act, 0, kOwnHandTarget});
+    CHECK(city.player().board[0].countdown == 2 && city.player().shadows == 1);
+    city.next_own_turn();
+    CHECK(city.player(1).board[0].hp == 1 && city.player().board[0].sequence == 1);
+    city.run({Act, 0, kOwnHandTarget});
+    city.next_own_turn();
+    CHECK(city.player().leader_hp == 17 && city.player().board[0].sequence == 2);
+    city.run({EndTurn});
+    CHECK(city.player(1).leader_hp == 18 && city.player().board_count == 0 && city.player().shadows == 3);
+
+    Scenario omerio;
+    omerio.place(official(10964120));
+    omerio.place(kWingedStatue);
+    omerio.place(kProjectedStatue);
+    omerio.place(kEvidence);
+    omerio.place(kCorrector, 1);
+    omerio.place(kCorrector, 1);
+    omerio.player().leader_hp = 15;
+    omerio.run({Evolve, 0});
+    CHECK(omerio.player(1).board[0].hp == 2 && omerio.player(1).board[1].hp == 2);
+    CHECK(omerio.player().leader_hp == 17 && omerio.player().board[0].sequence == 0);
+    CHECK(std::count_if(omerio.player().board.begin(), omerio.player().board.begin() + omerio.player().board_count,
+                        [](const auto& pc) { return pc.card_id == kHolyFalcon; }) == 2);
+    omerio.hand({official(10562210)});
+    omerio.run({Play, 0});
+    omerio.run({Act, 4});
+    CHECK(omerio.player(1).board_count == 0 && omerio.player().board[0].sequence == 1);
+
+    Scenario costs;
+    costs.place(official(10503210));
+    costs.hand({kTrainer, kTrainer, kTrainer});
+    costs.run({Play, 0});
+    CHECK(costs.player().board[0].countdown == 5);
+    costs.run({Play, 0});
+    CHECK(costs.player().board[0].countdown == 4);
+    costs.place(official(10903210));
+    costs.player().played_cost_mask = 0x1fc;
+    costs.player().destroyed_followers[kTrainer - kFirstCard] = 2;
+    costs.hand({kWingedStatue});
+    costs.run({Play, 0});
+    costs.run({EndTurn});
+    CHECK(std::none_of(costs.player().board.begin(), costs.player().board.begin() + costs.player().board_count,
+                       [](const auto& pc) { return pc.card_id == official(10903210); }));
+    CHECK(costs.player().board_count == 5 && costs.player().board[1].atk == 6 &&
+          costs.player().board[4].card_id == kTrainer && costs.player().board[4].max_hp == 6);
+}
+
+void rotation_targets_and_copies() {
+    Scenario goddess;
+    goddess.place(official(10502110));
+    goddess.hand({kTrainer, kRapid, kEvidence, kWingedStatue, kColette, kTeresa});
+    goddess.player().hand_modifiers[3].cost = -1;
+    goddess.reject({Evolve, 0});
+    goddess.run({Evolve, 0, kNoTarget, 0, 0b000111});
+    CHECK(goddess.player().shadows == 3 && goddess.player().hand_count == 6);
+    CHECK(goddess.player().hand[0] == kWingedStatue && goddess.player().hand[3] == kWingedStatue &&
+          goddess.player().hand_modifiers[3].cost == -1);
+
+    Scenario angel;
+    angel.hand({official(10902110)});
+    angel.place(kTrainer);
+    angel.place(kColette);
+    angel.place(kLilium);
+    angel.run({Play, 0, kNoTarget, 0, 0b101});
+    CHECK(angel.player().board[0].atk == 6 && angel.player().board[1].atk == 2 &&
+          angel.player().board[2].atk == 5 && angel.player().board[3].card_id == official(10902110));
+
+    Scenario spores;
+    spores.hand({official(10862310)});
+    spores.place(kColette, 1);
+    spores.place(kTrainer, 1);
+    spores.player().pp = 3;
+    spores.reject({Play, 0, 0});
+    spores.run({Play, 0, 1});
+    CHECK(spores.player(1).board_count == 1 && spores.player(1).board[0].card_id == kColette);
+    spores.hand({official(10862310)});
+    spores.player().pp = 5;
+    spores.place(kTrainer, 1).abilities |= kAura;
+    spores.place(kTrainer, 1).abilities |= kAmbush;
+    spores.run({Play, 0});
+    CHECK(spores.player(1).board_count == 1 && spores.player(1).shadows == 0);
+
+    Scenario copy;
+    const auto idol = official(11064120);
+    copy.place(idol);
+    const auto donor = copy.place(kTrainer, 1).creation_order;
+    copy.player(1).board[0].atk = 9;
+    copy.player(1).board[0].hp = 1;
+    copy.run({Evolve, 0, 0});
+    CHECK(copy.player(1).board_count == 0 && copy.player(1).shadows == 0 && copy.player().board_count == 2);
+    CHECK(copy.player().board[1].card_id == kTrainer && copy.player().board[1].hp == 1 &&
+          copy.player().board[1].atk == 9 && copy.player().board[1].creation_order > donor);
+
+    Scenario hand;
+    hand.place(official(10602210));
+    hand.hand({kTrainer});
+    auto& rival = hand.player(1);
+    rival.deck_end = rival.deck_idx + 1;
+    rival.deck[rival.deck_idx] = kRapid;
+    rival.deck_modifiers[rival.deck_idx].cost = -2;
+    hand.run({Act, 0, kOwnHandTarget});
+    CHECK(hand.player().hand[0] == kRapid && hand.player().hand_modifiers[0].cost == -2 &&
+          rival.deck_remaining() == 1 && hand.player().shadows == 0);
+    hand.hand({official(10802310)});
+    hand.hand({kRapid}, 1);
+    rival.hand_modifiers[0].cost = -2;
+    hand.run({Play, 0});
+    CHECK(hand.player().hand_count == 2 && hand.player().hand[0] == kRapid &&
+          hand.player().hand_modifiers[0].cost == -3 && rival.hand_modifiers[0].cost == -2);
+}
+
+void rotation_board_conditions() {
+    Scenario evidence;
+    const auto clue = official(11003210);
+    evidence.player().leader_hp = 14;
+    evidence.hand({clue, kEvidence});
+    evidence.run({Play, 0});
+    evidence.run({Play, 0});
+    CHECK(evidence.player().leader_hp == 16 && evidence.player().board[0].card_id == kEvidence &&
+          evidence.player().board[0].clue_count == 2 && evidence.player().shadows == 0);
+
+    Scenario book;
+    book.hand({official(10663210)});
+    book.place(kWingedStatue);
+    book.place(kEvidence, 1);
+    book.reject({Play, 0, 0});
+    book.run({Play, 0, kOwnBoardTarget});
+    CHECK(book.player().pp == 8 && book.player().board_count == 2 &&
+          book.player().board[1].card_id == kHolyFalcon);
+    book.next_own_turn();
+    book.next_own_turn();
+    CHECK(book.player().board[1].card_id == kWingedStatue);
+    CHECK(book.player().destroyed_amulets[kWingedStatue - kFirstCard] == 1);
+
+    Scenario promise;
+    promise.place(kRapid);
+    promise.place(kTrainer, 1);
+    promise.player().leader_hp = 10;
+    promise.hand({official(10962310)});
+    promise.reject({Play, 0, kNoTarget, 1});
+    promise.run({Play, 0, kNoTarget, kAllModes});
+    CHECK(promise.player().leader_hp == 12 && promise.player(1).board_count == 0);
+
+    Scenario heal;
+    heal.player().leader_hp = 14;
+    heal.place(official(10961110));
+    heal.place(official(10563110));
+    heal.place(official(10963110));
+    heal.place(kTrainer, 1);
+    heal.hand({kHealingSister});
+    heal.run({Play, 0});
+    CHECK(heal.player().board[0].evolution == Evolution::Normal && !heal.player().manual_evolved &&
+          heal.player().leader_hp == 19 && heal.player().board[4].card_id == official(10061120) &&
+          heal.player(1).board_count == 0);
+}
+
+int rotation_units() {
+    try {
+        all_rotation_cards();
+        rotation_forms_and_tokens();
+        rotation_crests();
+        rotation_sequences();
+        rotation_targets_and_copies();
+        rotation_board_conditions();
+        std::cout << "PASS rotation card cases=101, plus forms, tokens, crests and interactions\n";
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+}
+
+void validate_rotation(const GameState& state) {
+    CHECK(state.turn_player < 2 && state.turn_number >= 1 && state.turn_number <= kTurnLimit);
+    std::array<EntityId, 4 * kBoardLimit> orders{};
+    int order_count = 0;
+    const auto record = [&](EntityId order) {
+        CHECK(order > 0 && order < state.next_creation_order);
+        CHECK(std::find(orders.begin(), orders.begin() + order_count, order) == orders.begin() + order_count);
+        orders[order_count++] = order;
+    };
+    for (const auto& player : state.players) {
+        CHECK(player.max_pp <= 10 && player.pp <= player.max_pp && player.bonus_pp <= 1);
+        CHECK(player.sep <= 2 && player.extra_pp_uses <= 2);
+        CHECK(player.hand_count <= kHandLimit && player.board_count <= kBoardLimit &&
+              player.crest_count + player.faith_count <= kCrestLimit);
+        CHECK(player.deck_idx <= player.deck_end && player.deck_end <= kDeckCapacity);
+        CHECK(player.leader_hp <= 20 && (state.outcome != Outcome::Ongoing || player.leader_hp > 0));
+        const auto card_ok = [](CardId id) { const auto* card = find_card(id); return card && card->implemented; };
+        CHECK(std::all_of(player.deck.begin() + player.deck_idx, player.deck.begin() + player.deck_end, card_ok));
+        CHECK(std::all_of(player.hand.begin(), player.hand.begin() + player.hand_count, card_ok));
+        const auto hand_end = player.hand.begin() + player.hand_count;
+        CHECK(std::all_of(hand_end, player.hand.end(), [](CardId id) { return id == 0; }));
+        int clues = 0;
+        for (int i = 0; i < player.board_count; ++i) {
+            const auto& pc = player.board[i];
+            CHECK(card_ok(pc.card_id));
+            record(pc.creation_order);
+            CHECK(i == 0 || player.board[i - 1].creation_order < pc.creation_order);
+            const auto& card = *find_card(pc.card_id);
+            if (card.kind == Kind::Follower) {
+                // Lethal leader damage stops the queue before simultaneous follower damage is cleaned up.
+                CHECK((state.outcome != Outcome::Ongoing || pc.hp > 0) && pc.hp <= pc.max_hp &&
+                      pc.atk >= 0 && pc.clue_count == 0 && pc.countdown == 0);
+            } else {
+                CHECK(card.kind == Kind::Amulet && pc.evolution == Evolution::None &&
+                      (card.countdown == 0 || pc.countdown > 0));
+            }
+            clues += pc.clue_count > 0;
+        }
+        CHECK(clues <= 1);
+        for (int i = 0; i < player.crest_count; ++i) {
+            const auto& crest = player.crests[i];
+            record(crest.creation_order);
+            const auto* definition = find_crest(crest.id);
+            CHECK(definition && (definition->countdown == 0 || crest.countdown > 0));
+            CHECK(std::none_of(player.crests.begin(), player.crests.begin() + i,
+                               [&](const auto& other) { return other.id == crest.id; }));
+        }
+    }
+    if (state.outcome == Outcome::Ongoing) {
+        CHECK(state.end_reason == EndReason::None);
+    } else if (state.end_reason == EndReason::Health || state.end_reason == EndReason::EmptyDeck) {
+        CHECK(state.outcome == Outcome::FirstWins || state.outcome == Outcome::SecondWins);
+        const auto& loser = state.players[state.outcome == Outcome::FirstWins ? 1 : 0];
+        CHECK(state.end_reason == EndReason::Health ? loser.leader_hp <= 0 : loser.deck_remaining() == 0);
+    } else {
+        CHECK(state.end_reason == EndReason::TurnLimit && state.outcome == Outcome::BothLose && state.turn_number == kTurnLimit);
+    }
+}
+
+int stress_rotation() {
+    constexpr int games = 10'000;
+    constexpr std::uint64_t seed = 0x535657425742ULL;
+    std::mt19937_64 rng(seed);
+    const auto rotation = neutral_bishop_rotation();
+    std::vector<CardId> pool;
+    for (int copy = 0; copy < 3; ++copy) pool.insert(pool.end(), rotation.begin(), rotation.end());
+    std::vector<CardId> played;
+    int max_actions = 0;
+    std::uint64_t total_actions = 0;
+    const auto started = std::chrono::steady_clock::now();
+    for (int game = 0; game < games; ++game) {
+        // Both seats inherit the same legal deck, with up to three copies per card.
+        std::shuffle(pool.begin(), pool.end(), rng);
+        Deck deck{};
+        std::copy_n(pool.begin(), kDeckSize, deck.begin());
+        const auto game_seed = rng();
+        auto state = new_game(deck, deck, game_seed);
+        int actions = 0;
+        try {
+            validate_rotation(state);
+            while (state.outcome == Outcome::Ongoing) {
+                CHECK(actions < 2048);
+                const auto choices = legal_actions(state);
+                CHECK(!choices.empty());
+                const auto move = choices[std::uniform_int_distribution<int>(0, choices.size() - 1)(rng)];
+                if (move.type == Play) {
+                    const auto id = state.players[state.turn_player].hand[move.src];
+                    if (std::find(played.begin(), played.end(), id) == played.end()) played.push_back(id);
+                }
+                apply_legal_action(state, move);
+                ++actions;
+                validate_rotation(state);
+            }
+            CHECK(legal_actions(state).empty());
+        } catch (const std::exception& error) {
+            std::cerr << "Rotation game " << game + 1 << " seed=" << game_seed << " step=" << actions << ": "
+                      << error.what() << '\n';
+            return 1;
+        }
+        total_actions += actions;
+        max_actions = std::max(max_actions, actions);
+    }
+    CHECK(std::all_of(rotation.begin(), rotation.end(), [&](const auto id) {
+        return std::find(played.begin(), played.end(), id) != played.end();
+    }));
+    const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    std::cout << "PASS rotation_mirror games=" << games << " seed=" << seed << " cards_played=" << rotation.size()
+              << " actions=" << total_actions << " max_actions=" << max_actions << " invariant_failures=0\n"
+              << std::fixed << std::setprecision(3) << "elapsed_seconds=" << secs
+              << " games_per_second=" << games / secs << " (single thread, all states checked)\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1205,6 +1697,8 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--stress") {
         return stress();
     }
-    std::cerr << "Usage: test_wb [--stress]\n";
+    if (argc == 2 && std::string_view(argv[1]) == "--rotation-unit") return rotation_units();
+    if (argc == 2 && std::string_view(argv[1]) == "--rotation-stress") return stress_rotation();
+    std::cerr << "Usage: test_wb [--stress|--rotation-unit|--rotation-stress]\n";
     return 2;
 }

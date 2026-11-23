@@ -189,9 +189,14 @@ GameState actions_json(std::ostream& out, const GameState& initial, std::span<co
             out << ",\"source\":{\"zone\":\"" << (hand ? "hand" : "board") << "\",\"slot\":"
                 << action.src + 1 << ',';
             card_fields(out, hand ? player.hand[action.src] : player.board[action.src].card_id);
-            if (action.type == ActionType::Play && find_card(player.hand[action.src])->crystal_form &&
-                player.available_pp() < card_cost(*find_card(player.hand[action.src]), player.hand_modifiers[action.src])) {
-                out << ",\"form\":\"crystal\"";
+            if (action.type == ActionType::Play) {
+                const auto& card = *find_card(player.hand[action.src]);
+                if (card.enhance_cost && player.available_pp() >= card.enhance_cost) {
+                    out << ",\"form\":\"enhance\"";
+                } else if (player.available_pp() < card_cost(card, player.hand_modifiers[action.src])) {
+                    if (card.crystal_form) out << ",\"form\":\"crystal\"";
+                    else if (card.accelerate_form) out << ",\"form\":\"accelerate\"";
+                }
             }
             out << '}';
         }
@@ -205,10 +210,25 @@ GameState actions_json(std::ostream& out, const GameState& initial, std::span<co
             const bool hand = action.dst >= kOwnHandTarget;
             const bool own = action.dst >= kOwnBoardTarget;
             const int slot = action.dst - (hand ? kOwnHandTarget : own ? kOwnBoardTarget : 0);
-            out << ",\"target\":{\"kind\":\"" << (hand ? "hand" : "follower") << "\",\"seat\":"
-                << 1 + (own ? before.turn_player : enemy) << ",\"slot\":" << slot + 1 << ',';
-            card_fields(out, hand ? player.hand[slot] : before.players[own ? before.turn_player : enemy].board[slot].card_id);
+            const auto card = hand ? player.hand[slot] : before.players[own ? before.turn_player : enemy].board[slot].card_id;
+            out << ",\"target\":{\"kind\":\"" << (hand ? "hand" : find_card(card)->kind == Kind::Follower ? "follower" : "amulet")
+                << "\",\"seat\":" << 1 + (own ? before.turn_player : enemy) << ",\"slot\":" << slot + 1 << ',';
+            card_fields(out, card);
             out << '}';
+        }
+        if (action.selection) {
+            const bool hand = action.type != ActionType::Play;
+            out << ",\"targets\":[";
+            bool separate = false;
+            for (int slot = 0; slot < (hand ? player.hand_count : player.board_count); ++slot) {
+                if (!(action.selection & (1 << slot))) continue;
+                out << (separate ? ",{" : "{") << "\"kind\":\"" << (hand ? "hand" : "follower")
+                    << "\",\"seat\":" << 1 + before.turn_player << ",\"slot\":" << slot + 1 << ',';
+                card_fields(out, hand ? player.hand[slot] : player.board[slot].card_id);
+                out << '}';
+                separate = true;
+            }
+            out << ']';
         }
         out << '}';
         comma = true;

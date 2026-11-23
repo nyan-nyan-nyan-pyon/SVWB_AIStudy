@@ -9,6 +9,7 @@ import re
 KINDS = {"フォロワー": "Follower", "アミュレット": "Amulet", "スペル": "Spell", "信仰": "Faith"}
 SUPPLEMENTS = {"tokens": "missing_tokens", "crests": "crests", "forms": "special_forms"}
 CUSTOM = {"EvolveWithAlly", "BanishLowestAndEvolve"}
+CREST_SOURCE_IDS = {"Testimony": 11063312, "Rituel": 10864122, "Rapid": 11064112}
 FLAGS = {"FLAG_WARD", "FLAG_STORM", "FLAG_RUSH", "kBane", "kBarrier", "kAura",
          "kAmbush", "kIntimidate", "kAttackBlocked", "kDrain", "kDoubleStrike"}
 EFFECT_FIELDS = {
@@ -16,6 +17,7 @@ EFFECT_FIELDS = {
     "card": int, "health_modifier": int, "mode": int, "crest": "CrestId",
     "granted_abilities": FLAGS, "transformed_evolution": "Evolution",
     "condition": "Condition", "threshold": int, "handler": "CardHandler", "spellboost_multiplier": int,
+    "filter": "DeckFilter",
 }
 
 
@@ -84,15 +86,24 @@ def generate(directory):
             raise ValueError(f"Invalid or duplicate official ID: {official}")
         catalog[official] = card
     overlay = read(directory, "engine_cards.json")
-    if overlay["schema"] != 1:
+    extension = read(directory, "phase5b1_cards.json")
+    research = {row["special_effect_id"]: row for row in read(directory, "svwb_special_effect_research.json")["records"]}
+    if overlay["schema"] != 1 or extension["schema"] != 1:
         raise ValueError("Unknown card engine schema version")
-    rules = overlay["cards"]
-    forms = {row["base_card_id"]: row for row in supplements["forms"] if row["form"] == "結晶"}
+    rules = overlay["cards"] + extension["cards"]
+    forms = {row["source_card_id"]: row for row in research.values() if row["kind"] in ("crystallize", "accelerate")}
+    for row in rules:
+        if "base_card_id" in row:
+            form = forms[row["base_card_id"]]
+            row["card_id"] = form["special_effect_id"]
     if len({row["id"] for row in rules}) != len(rules):
         raise ValueError("Duplicate engine IDs")
     fixed = {row["card_id"]: row["id"] for row in rules if "card_id" in row}
     if len(fixed) != sum("card_id" in row for row in rules):
         raise ValueError("Duplicate official IDs in engine overlays")
+    scope = {card["card_id"] for card in rotation if card["class"] in ("ニュートラル", "ビショップ")}
+    if scope - fixed.keys():
+        raise ValueError(f"Missing rotation implementations: {sorted(scope - fixed.keys())}")
     fixed_ids = {row["id"] for row in rules}
     next_ids = iter(number for number in range(101, 65536) if number not in fixed_ids)
     ids = dict(fixed)
@@ -115,18 +126,19 @@ def generate(directory):
     for id, official, metadata, rules in entries:
         form = forms[rules["base_card_id"]] if "base_card_id" in rules else None
         official_data = catalog[rules["base_card_id"]] if form else metadata
-        text = form["effect_text"] if form else official_data.get("text", "")
+        text = (form["effect_text"] or form["effect_summary"]) if form else official_data.get("text", rules.get("text", ""))
         evolved_text = official_data.get("evolved_text", "") or ""
         keywords = sorted(set(re.findall(r"【([^】_\n]+)(?:_[^】]*)?】", text + "\n" + evolved_text)))
-        kind = form["form_type"] if form else official_data.get("type")
+        kind = (form["form_type"] or ("スペル" if form["kind"] == "accelerate" else "アミュレット")) if form else official_data.get("type")
         values = {
             "id": id, "name": rules.get("name", official_data.get("name")), "kind": rules.get("kind", KINDS.get(kind)),
             "cost": form["play_cost"] if form else rules.get("cost", official_data.get("cost")),
             "atk": rules.get("atk", 0 if form else official_data.get("attack", 0)),
             "hp": rules.get("hp", 0 if form else official_data.get("defense", 0)),
-            "abilities": rules.get("abilities", []), "countdown": rules.get("countdown", 0),
+            "abilities": rules.get("abilities", []), "countdown": (form["countdown"] or 0) if form else rules.get("countdown", 0),
             "act_cost": rules.get("act_cost", -1), "modes": rules.get("modes", 0),
-            "enhance_cost": rules.get("enhance_cost", 0), "crystal_form": rules.get("crystal_form", 0),
+            "enhance_cost": rules.get("enhance_cost", 0),
+            "crystal_form": ids[rules["crystal_form_id"]] if "crystal_form_id" in rules else rules.get("crystal_form", 0),
             "clue": rules.get("clue", False),
         }
         types = {"name": str, "kind": "Kind", "abilities": FLAGS, "clue": bool}
@@ -147,14 +159,23 @@ def generate(directory):
             optional = {"earth": bool, "spellboost": bool, "spellboost_cost_reduction": int,
                         "fusion": "FusionMaterial", "fusion_trait": str}
             fields.extend(f".{key}={cpp(rules[key], kind)}" for key, kind in optional.items() if key in rules)
+            if "accelerate_form_id" in rules:
+                fields.append(f".accelerate_form={ids[rules['accelerate_form_id']]}")
+            if form:
+                fields.append(f".base_form={ids[rules['base_card_id']]}")
+            for key, kind in {"all_modes_with_high_cost": bool, "super_evolve_hand_discount": int}.items():
+                if key in rules:
+                    fields.append(f".{key}={cpp(rules[key], kind)}")
         out.append("    {" + ", ".join(fields) + "},")
     out.append("};\nconstexpr CrestDef crests[]{")
-    for row in overlay["crests"]:
-        out.append(f"    {{{cpp(row['id'], 'CrestId')}, {cpp(row['countdown'], int)}, "
-                   f"{cpp(row['clock'], 'CrestClock')}, {effect_list(row['effects'], ids, implemented)}}},")
+    for row in overlay["crests"] + extension["crests"]:
+        record = research[row.get("special_effect_id", CREST_SOURCE_IDS.get(row["id"]))]
+        out.append(f"    {{{cpp(row['id'], 'CrestId')}, {cpp(record['countdown'] or 0, int)}, "
+                   f"{cpp(row['clock'], 'CrestClock')}, {effect_list(row['effects'], ids, implemented)}, "
+                   f"{literal(record['special_name'])}, {record['special_effect_id']}}},")
     out.append("};\nconstexpr OfficialCard official_cards[]{")
     out.extend(f"    {{{official}, {id}}}," for official, id in sorted(ids.items()))
-    out.append("};\n")
+    out.append("};\nconstexpr CardId rotation_batch[]{" + ", ".join(str(ids[id]) for id in sorted(scope)) + "};\n")
     return "\n".join(out)
 
 

@@ -361,6 +361,7 @@ MatchupFeatures::MatchupFeatures(const Deck& first, const Deck& second) {
             if (effect.operation == Operation::GrantCrest) {
                 if (const auto* crest = find_crest(effect.crest)) {
                     for (const auto& step : crest->effects) add(step.card);
+                    if (effect.crest == CrestId::Kukishiro) add(kHolyFalcon);
                 }
             }
         }
@@ -369,6 +370,7 @@ MatchupFeatures::MatchupFeatures(const Deck& first, const Deck& second) {
         const auto* card = find_card(cards_[i]);
         if (!card || !card->implemented) throw std::invalid_argument("Invalid card in matchup");
         add(card->crystal_form);
+        add(card->accelerate_form);
         collect(card->effects);
     }
     std::sort(cards_.begin(), cards_.end(), [](CardId a, CardId b) {

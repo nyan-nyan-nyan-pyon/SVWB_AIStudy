@@ -196,7 +196,10 @@ function renderCrests(id, crests) {
       continue;
     }
     const item = element("div", "slot crest filled");
-    item.append(element("span", "", crest.name), element("b", "", crest.faith ? "信仰" : "CD " + crest.countdown));
+    item.append(element("span", "", crest.name));
+    if (crest.faith || crest.countdown != null) {
+      item.append(element("b", "", crest.faith ? "信仰" : "CD " + crest.countdown));
+    }
     zone.append(item);
   }
 }

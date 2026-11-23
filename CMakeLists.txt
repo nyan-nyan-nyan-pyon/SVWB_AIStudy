@@ -35,6 +35,7 @@ add_custom_command(OUTPUT "${SVWB_GENERATED_CARDS}"
             data/cards/svwb_rotation_ja.json data/cards/svwb_missing_tokens.json
             data/cards/svwb_crests.json data/cards/svwb_special_forms.json
             data/cards/svwb_supplements_manifest.json data/cards/engine_cards.json
+            data/cards/svwb_special_effect_research.json data/cards/phase5b1_cards.json
     VERBATIM)
 add_library(svwb_rules STATIC cpp/src/wb_cards.cpp cpp/src/wb_rules.cpp "${SVWB_GENERATED_CARDS}")
 target_include_directories(svwb_rules PUBLIC cpp/include)
@@ -85,7 +86,9 @@ if(BUILD_TESTING)
     svwb_enable_warnings(test_wb)
     add_test(NAME wb_rules_unit COMMAND test_wb)
     add_test(NAME wb_mirror_random_10000 COMMAND test_wb --stress)
-    set_tests_properties(wb_mirror_random_10000 PROPERTIES TIMEOUT 60)
+    add_test(NAME wb_rotation_101_unit COMMAND test_wb --rotation-unit)
+    add_test(NAME wb_rotation_mirror_random_10000 COMMAND test_wb --rotation-stress)
+    set_tests_properties(wb_mirror_random_10000 wb_rotation_mirror_random_10000 PROPERTIES TIMEOUT 60)
 
     if(Python3_Interpreter_FOUND)
         add_test(NAME selfplay_binary_logs COMMAND "${Python3_EXECUTABLE}"

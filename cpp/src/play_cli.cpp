@@ -93,8 +93,10 @@ std::string_view crest_name(CrestId id) {
     case CrestId::Rituel: return "リテュエル";
     case CrestId::Rapid: return "ラピッドハット";
     case CrestId::None: return "";
+    default:
+        if (const auto* crest = find_crest(id)) return crest->name;
+        return "クレスト";
     }
-    return "クレスト";
 }
 
 std::string_view mode_name(CardId id, int mode) {
@@ -104,6 +106,16 @@ std::string_view mode_name(CardId id, int mode) {
     if (id == kRituel) {
         constexpr std::string_view modes[]{"相手フォロワー全体に3ダメージ", "相手リーダーに3ダメージ", "自リーダーを3回復"};
         return modes[mode - 1];
+    }
+    if (mode == kAllModes) return "すべてのモード";
+    const auto* card = find_card(id);
+    if (card && mode >= 1 && mode <= card->modes) {
+        const std::string_view markers[]{"（1）", "（2）", "（3）"};
+        const auto start = card->text.find(markers[mode - 1]);
+        if (start != std::string_view::npos) {
+            auto line = card->text.substr(start + markers[mode - 1].size());
+            return line.substr(0, line.find('\n'));
+        }
     }
     return {};
 }
@@ -138,14 +150,16 @@ Object describe_action(const GameState& state, Action action, std::optional<Enti
         result["source_slot"] = action.src;
         const auto& card = *find_card(player.hand[action.src]);
         const auto price = card_cost(card, player.hand_modifiers[action.src]);
-        const bool crystal = card.crystal_form && price > player.available_pp();
         const bool enhance = card.enhance_cost > 0 && card.enhance_cost <= player.available_pp();
-        const auto& played = crystal ? *find_card(card.crystal_form) : card;
-        const int cost = enhance ? card.enhance_cost : crystal ? played.cost : price;
-        result["form"] = crystal ? "crystal" : enhance ? "enhance" : "normal";
+        const bool alternate = !enhance && price > player.available_pp();
+        const bool crystal = alternate && card.crystal_form;
+        const bool accelerate = alternate && card.accelerate_form && !crystal;
+        const int cost = enhance ? card.enhance_cost : crystal ? find_card(card.crystal_form)->cost :
+            accelerate ? find_card(card.accelerate_form)->cost : price;
+        result["form"] = crystal ? "crystal" : accelerate ? "accelerate" : enhance ? "enhance" : "normal";
         result["card_id"] = card.id;
         result["cost"] = cost;
-        const std::string_view verb = crystal ? "結晶" : enhance ? "エンハンス" : "プレイ";
+        const std::string_view verb = crystal ? "結晶" : accelerate ? "アクセラレート" : enhance ? "エンハンス" : "プレイ";
         label = std::string(verb) + " " + std::to_string(cost) + "PP｜" + std::string(card.name);
         if (action.choice && !mode_name(card.id, action.choice).empty()) {
             label += " · ";
@@ -220,6 +234,25 @@ Object describe_action(const GameState& state, Action action, std::optional<Enti
             label += std::string(hand ? "（手札 " : "（場 ") + std::to_string(slot + 1) + "）";
         }
     }
+    if (action.selection && !(public_before && action.type == ActionType::Play)) {
+        const bool hand = action.type != ActionType::Play;
+        Array slots;
+        label += " → ";
+        if (hand && public_before) {
+            label += "非公開の手札 " + std::to_string(std::popcount(action.selection)) + "枚";
+        } else {
+            for (int slot = 0; slot < (hand ? player.hand_count : player.board_count); ++slot) {
+                if (!(action.selection & (1 << slot))) continue;
+                if (!slots.empty()) label += " ＋ ";
+                const auto id = hand ? player.hand[slot] : player.board[slot].card_id;
+                label += find_card(id)->name;
+                label += std::string(hand ? "（手札 " : "（場 ") + std::to_string(slot + 1) + "）";
+                slots.emplace_back(slot);
+            }
+        }
+        result["target_kind"] = hand ? "hand" : "own_board";
+        result["target_slots"] = std::move(slots);
+    }
     result["label"] = std::move(label);
     return result;
 }
@@ -231,6 +264,7 @@ Object hand_card(CardId id, int slot, CardModifiers modifiers) {
             {"attack", card.atk + modifiers.attack}, {"health", card.hp + modifiers.defense},
             {"spellboost", modifiers.spellboost}, {"fused_materials", modifiers.fused_materials},
             {"crystal_cost", card.crystal_form ? Json(find_card(card.crystal_form)->cost) : Json{}},
+            {"accelerate_cost", card.accelerate_form ? Json(find_card(card.accelerate_form)->cost) : Json{}},
             {"enhance_cost", card.enhance_cost ? Json(card.enhance_cost) : Json{}}};
 }
 
@@ -277,7 +311,8 @@ Object player_json(const GameState& state, int seat, bool show_hand, const Actio
             crests.emplace_back(Object{{"name", find_card(faith)->name}, {"faith", true}, {"countdown", Json{}}});
         } else {
             const auto& crest = player.crests[slot];
-            crests.emplace_back(Object{{"name", crest_name(crest.id)}, {"countdown", crest.countdown}});
+            crests.emplace_back(Object{{"name", crest_name(crest.id)},
+                                       {"countdown", crest.countdown ? Json(crest.countdown) : Json{}}});
         }
     }
     Object result{

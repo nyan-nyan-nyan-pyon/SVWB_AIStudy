@@ -33,7 +33,12 @@ const CrestDef* find_crest(CrestId id) {
 }
 
 CardId printed_card(CardId id) {
-    return id == kAlmirajCrystal ? kAlmiraj : id;
+    const auto* card = find_card(id);
+    return card && card->base_form ? card->base_form : id;
+}
+
+std::span<const CardId> neutral_bishop_rotation() {
+    return rotation_batch;
 }
 
 bool is_deck_card(CardId id) {

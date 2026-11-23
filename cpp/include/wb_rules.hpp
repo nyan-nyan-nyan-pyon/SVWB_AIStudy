@@ -12,7 +12,7 @@ inline constexpr CardId kFirstCard = 101;
 inline constexpr CardId kLastForm = 121;
 inline constexpr int kCardSlots = kLastForm - kFirstCard + 1;
 inline constexpr int kDeckCapacity = 80;
-inline constexpr int kAdditionalCardCounters = 64;
+inline constexpr int kAdditionalCardCounters = 96;
 using EntityId = std::uint32_t;
 inline constexpr int kOwnBoardTarget = kBoardLimit;
 inline constexpr int kOwnHandTarget = 2 * kBoardLimit;
@@ -52,7 +52,7 @@ enum class Evolution : std::uint8_t { None, Normal, Super };
 enum class Phase : std::uint8_t { Mulligan, Main };
 enum class Outcome : std::uint8_t { Ongoing, FirstWins, SecondWins, BothLose };
 enum class EndReason : std::uint8_t { None, Health, EmptyDeck, TurnLimit };
-enum class CrestId : std::uint8_t { None, Testimony, Rituel, Rapid };
+enum class CrestId : std::uint8_t { None, Testimony, Rituel, Rapid, Haylem, Erralde, Kukishiro, Sisters };
 
 // Supplemental ability flags used by the extended combat and target rules.
 inline constexpr std::uint16_t kBane = 1 << 7;
@@ -94,6 +94,10 @@ struct Permanent {
     bool attacked_twice;
     std::uint16_t earth_count;
     CardModifiers modifiers;
+    std::uint16_t temporary_abilities;
+    std::uint8_t expires_end_ply;
+    std::uint8_t sequence;
+    bool banish_at_end;
 
     bool operator==(const Permanent&) const = default;
 };
@@ -132,10 +136,12 @@ struct PlayerState {
     std::array<CardId, kCrestLimit> faiths;
     std::array<NamedActions, kCardSlots> actions;
     std::array<std::uint16_t, kCardSlots> destroyed_followers; // By printed card; independent of shadows.
+    std::array<std::uint16_t, kCardSlots> destroyed_amulets;
     std::array<CardCounters, kAdditionalCardCounters> other_counters;
     std::uint16_t shadows;
     std::uint16_t followers_entered;
     std::uint16_t plays_this_turn;
+    std::uint16_t played_cost_mask;
     std::int16_t leader_hp;
     std::uint8_t deck_idx;
     std::uint8_t deck_end;
@@ -179,6 +185,7 @@ struct Action {
     std::int8_t src = kNoTarget;
     std::int8_t dst = kNoTarget;
     std::uint8_t choice = 0; // One-based mode or a mulligan/fusion mask. Fusion skips the source slot.
+    std::uint16_t selection = 0; // Slot mask for effects selecting multiple cards from one zone.
 
     bool operator==(const Action&) const = default;
 };
@@ -224,6 +231,6 @@ void apply_legal_action(GameState& state, Action action, const RuleConfig& rules
 }
 
 static_assert(std::is_trivial_v<GameState> && std::is_standard_layout_v<GameState>);
-static_assert(sizeof(GameState) <= 4096);
+static_assert(sizeof(GameState) <= 4608);
 
 } // namespace svwb::wb
