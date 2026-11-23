@@ -18,6 +18,7 @@ EFFECT_FIELDS = {
     "granted_abilities": FLAGS, "transformed_evolution": "Evolution",
     "condition": "Condition", "threshold": int, "handler": "CardHandler", "spellboost_multiplier": int,
     "filter": "DeckFilter",
+    "magnitude": "Magnitude", "cost_override": int, "alternate_card": int,
 }
 
 
@@ -61,8 +62,11 @@ def effect_list(steps, ids, implemented):
             step["operation"] = "Custom"
         if "card_id" in step:
             step["card"] = ids[step.pop("card_id")]
-        if step.get("card", 0) and step["card"] not in implemented:
-            raise ValueError(f"Effect references a card without engine rules: {step['card']}")
+        if "alternate_card_id" in step:
+            step["alternate_card"] = ids[step.pop("alternate_card_id")]
+        for key in ("card", "alternate_card"):
+            if step.get(key, 0) and step[key] not in implemented:
+                raise ValueError(f"Effect references a card without engine rules: {step[key]}")
         if not step.get("operation") or not step.get("trigger"):
             raise ValueError(f"Effect requires a trigger and an operation: {step}")
         fields = [f".{name}={cpp(step[name], kind)}" for name, kind in EFFECT_FIELDS.items() if name in step]
@@ -87,10 +91,11 @@ def generate(directory):
         catalog[official] = card
     overlay = read(directory, "engine_cards.json")
     extension = read(directory, "phase5b1_cards.json")
+    elf_royal = read(directory, "phase5b2_cards.json")
     research = {row["special_effect_id"]: row for row in read(directory, "svwb_special_effect_research.json")["records"]}
-    if overlay["schema"] != 1 or extension["schema"] != 1:
+    if any(part["schema"] != 1 for part in (overlay, extension, elf_royal)):
         raise ValueError("Unknown card engine schema version")
-    rules = overlay["cards"] + extension["cards"]
+    rules = overlay["cards"] + extension["cards"] + elf_royal["cards"]
     forms = {row["source_card_id"]: row for row in research.values() if row["kind"] in ("crystallize", "accelerate")}
     for row in rules:
         if "base_card_id" in row:
@@ -102,8 +107,11 @@ def generate(directory):
     if len(fixed) != sum("card_id" in row for row in rules):
         raise ValueError("Duplicate official IDs in engine overlays")
     scope = {card["card_id"] for card in rotation if card["class"] in ("ニュートラル", "ビショップ")}
-    if scope - fixed.keys():
-        raise ValueError(f"Missing rotation implementations: {sorted(scope - fixed.keys())}")
+    elf = {card["card_id"] for card in rotation if card["class"] == "エルフ"}
+    royal = {card["card_id"] for card in rotation if card["class"] == "ロイヤル"}
+    missing = (scope | elf | royal) - fixed.keys()
+    if missing:
+        raise ValueError(f"Missing rotation implementations: {sorted(missing)}")
     fixed_ids = {row["id"] for row in rules}
     next_ids = iter(number for number in range(101, 65536) if number not in fixed_ids)
     ids = dict(fixed)
@@ -149,7 +157,7 @@ def generate(directory):
             fields.append(f".effects={effect_list(rules['effects'], ids, implemented)}")
         fields.append(f".official_id={official}")
         strings = {"class_name": official_data.get("class", rules.get("class_name", "")),
-                   "traits": "\n".join(official_data.get("traits") or []), "keywords": "\n".join(keywords),
+                   "traits": "\n".join(official_data.get("traits", rules.get("traits")) or []), "keywords": "\n".join(keywords),
                    "text": text, "evolved_text": evolved_text}
         fields.extend(f".{key}={literal(value)}" for key, value in strings.items() if value)
         if id in relations:
@@ -163,19 +171,33 @@ def generate(directory):
                 fields.append(f".accelerate_form={ids[rules['accelerate_form_id']]}")
             if form:
                 fields.append(f".base_form={ids[rules['base_card_id']]}")
-            for key, kind in {"all_modes_with_high_cost": bool, "super_evolve_hand_discount": int}.items():
+            extensions = {"all_modes_with_high_cost": bool, "super_evolve_hand_discount": int,
+                          "next_enhance_cost": int, "full_combo_modes": int, "full_board_modes": int,
+                          "enhanced_all_modes": bool, "evolve_modes": bool, "hand_evolve_discount": int,
+                          "hand_super_cost": int, "drawn_cost": int, "hand_end_combo": int,
+                          "hand_swap_on_evidence": bool, "once_per_own_turn": bool}
+            for key, kind in extensions.items():
                 if key in rules:
                     fields.append(f".{key}={cpp(rules[key], kind)}")
+            if "faith_id" in rules:
+                fields.append(f".faith={ids[rules['faith_id']]}")
+            if "faith_trigger" in rules:
+                record = research[official]
+                if record["kind"] != "faith":
+                    raise ValueError(f"Invalid research faith {official}")
+                fields.append(f".faith_trigger={cpp(rules['faith_trigger'], 'Trigger')}")
         out.append("    {" + ", ".join(fields) + "},")
     out.append("};\nconstexpr CrestDef crests[]{")
-    for row in overlay["crests"] + extension["crests"]:
+    for row in overlay["crests"] + extension["crests"] + elf_royal["crests"]:
         record = research[row.get("special_effect_id", CREST_SOURCE_IDS.get(row["id"]))]
         out.append(f"    {{{cpp(row['id'], 'CrestId')}, {cpp(record['countdown'] or 0, int)}, "
                    f"{cpp(row['clock'], 'CrestClock')}, {effect_list(row['effects'], ids, implemented)}, "
                    f"{literal(record['special_name'])}, {record['special_effect_id']}}},")
     out.append("};\nconstexpr OfficialCard official_cards[]{")
     out.extend(f"    {{{official}, {id}}}," for official, id in sorted(ids.items()))
-    out.append("};\nconstexpr CardId rotation_batch[]{" + ", ".join(str(ids[id]) for id in sorted(scope)) + "};\n")
+    out.append("};")
+    for name, group in (("rotation_batch", scope), ("rotation_elf", elf), ("rotation_royal", royal)):
+        out.append(f"constexpr CardId {name}[]{{" + ", ".join(str(ids[id]) for id in sorted(group)) + "};")
     return "\n".join(out)
 
 

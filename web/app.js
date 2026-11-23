@@ -198,7 +198,7 @@ function renderCrests(id, crests) {
     const item = element("div", "slot crest filled");
     item.append(element("span", "", crest.name));
     if (crest.faith || crest.countdown != null) {
-      item.append(element("b", "", crest.faith ? "信仰" : "CD " + crest.countdown));
+      item.append(element("b", "", crest.faith ? "信仰 " + (crest.faith_value ?? 0) : "CD " + crest.countdown));
     }
     zone.append(item);
   }

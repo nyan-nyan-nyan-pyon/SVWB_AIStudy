@@ -150,11 +150,12 @@ Object describe_action(const GameState& state, Action action, std::optional<Enti
         result["source_slot"] = action.src;
         const auto& card = *find_card(player.hand[action.src]);
         const auto price = card_cost(card, player.hand_modifiers[action.src]);
-        const bool enhance = card.enhance_cost > 0 && card.enhance_cost <= player.available_pp();
+        const int enhanced_price = enhance_payment(card, player.available_pp());
+        const bool enhance = enhanced_price != 0;
         const bool alternate = !enhance && price > player.available_pp();
         const bool crystal = alternate && card.crystal_form;
         const bool accelerate = alternate && card.accelerate_form && !crystal;
-        const int cost = enhance ? card.enhance_cost : crystal ? find_card(card.crystal_form)->cost :
+        const int cost = enhance ? enhanced_price : crystal ? find_card(card.crystal_form)->cost :
             accelerate ? find_card(card.accelerate_form)->cost : price;
         result["form"] = crystal ? "crystal" : accelerate ? "accelerate" : enhance ? "enhance" : "normal";
         result["card_id"] = card.id;
@@ -213,6 +214,10 @@ Object describe_action(const GameState& state, Action action, std::optional<Enti
         default: throw std::logic_error("Unknown board action");
         }
         label += name;
+        if (visible && action.choice) {
+            const auto mode = mode_name(card.id, action.choice);
+            if (!mode.empty()) label += " · " + std::string(mode);
+        }
         break;
     }
     }
@@ -235,7 +240,7 @@ Object describe_action(const GameState& state, Action action, std::optional<Enti
         }
     }
     if (action.selection && !(public_before && action.type == ActionType::Play)) {
-        const bool hand = action.type != ActionType::Play;
+        const bool hand = action.selection_in_hand || action.type != ActionType::Play;
         Array slots;
         label += " → ";
         if (hand && public_before) {
@@ -308,7 +313,9 @@ Object player_json(const GameState& state, int seat, bool show_hand, const Actio
             crests.emplace_back();
         } else if (slot >= player.crest_count) {
             const auto faith = player.faiths[slot - player.crest_count];
-            crests.emplace_back(Object{{"name", find_card(faith)->name}, {"faith", true}, {"countdown", Json{}}});
+            const int index = slot - player.crest_count;
+            crests.emplace_back(Object{{"name", find_card(faith)->name}, {"faith", true}, {"countdown", Json{}},
+                                       {"faith_value", player.faith_values[index]}, {"faith_upgrades", player.faith_upgrades[index]}});
         } else {
             const auto& crest = player.crests[slot];
             crests.emplace_back(Object{{"name", crest_name(crest.id)},

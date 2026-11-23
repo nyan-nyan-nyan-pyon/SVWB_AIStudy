@@ -36,6 +36,7 @@ add_custom_command(OUTPUT "${SVWB_GENERATED_CARDS}"
             data/cards/svwb_crests.json data/cards/svwb_special_forms.json
             data/cards/svwb_supplements_manifest.json data/cards/engine_cards.json
             data/cards/svwb_special_effect_research.json data/cards/phase5b1_cards.json
+            data/cards/phase5b2_cards.json
     VERBATIM)
 add_library(svwb_rules STATIC cpp/src/wb_cards.cpp cpp/src/wb_rules.cpp "${SVWB_GENERATED_CARDS}")
 target_include_directories(svwb_rules PUBLIC cpp/include)
@@ -88,7 +89,11 @@ if(BUILD_TESTING)
     add_test(NAME wb_mirror_random_10000 COMMAND test_wb --stress)
     add_test(NAME wb_rotation_101_unit COMMAND test_wb --rotation-unit)
     add_test(NAME wb_rotation_mirror_random_10000 COMMAND test_wb --rotation-stress)
-    set_tests_properties(wb_mirror_random_10000 wb_rotation_mirror_random_10000 PROPERTIES TIMEOUT 60)
+    add_test(NAME wb_elf_royal_123_unit COMMAND test_wb --elf-royal-unit)
+    add_test(NAME wb_elf_neutral_random_5000 COMMAND test_wb --elf-stress)
+    add_test(NAME wb_royal_neutral_random_5000 COMMAND test_wb --royal-stress)
+    set_tests_properties(wb_mirror_random_10000 wb_rotation_mirror_random_10000
+        wb_elf_neutral_random_5000 wb_royal_neutral_random_5000 PROPERTIES TIMEOUT 60)
 
     if(Python3_Interpreter_FOUND)
         add_test(NAME selfplay_binary_logs COMMAND "${Python3_EXECUTABLE}"

@@ -1,0 +1,845 @@
+{"schema": 1,
+  "cards": [
+    {"id": 223, "card_id": 10012110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "ChosenEnemyFollower", "amount": 3, "condition": "Combo", "threshold": 3}
+      ]
+    },
+    {"id": 224, "card_id": 10012310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Bounce", "target": "ChosenOwnPermanent"},
+        {"trigger": "OnPlay", "operation": "Damage", "target": "RandomEnemyFollower", "amount": 2}
+      ]
+    },
+    {"id": 225, "card_id": 10614120, "abilities": "kDrain", "faith_id": 10614122,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "UpgradeFaith", "amount": 10, "card_id": 90014330}
+      ]
+    },
+    {"id": 226, "card_id": 10711120,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "ReturnToDeck", "target": "ChosenOwnHand"},
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 2, "card_id": 90011110}
+      ]
+    },
+    {"id": 227, "card_id": 10711310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "ReturnToDeck", "target": "ChosenOwnHandTwo"},
+        {"trigger": "OnPlay", "operation": "Draw", "amount": 2}
+      ]
+    },
+    {"id": 228, "card_id": 10712310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Heal", "target": "OwnLeader", "amount": 1},
+        {"trigger": "OnPlay", "operation": "GrantCrest", "crest": "Shrink", "condition": "Combo", "threshold": 3}
+      ]
+    },
+    {"id": 229, "card_id": 10713310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "RandomEnemyFollower", "amount": 2},
+        {"trigger": "OnPlay", "operation": "GrantCrest", "crest": "Expand", "condition": "Combo", "threshold": 3}
+      ]
+    },
+    {"id": 230, "card_id": 10811130, "abilities": "FLAG_WARD",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "ReturnToDeck", "target": "ChosenOwnHand"},
+        {"trigger": "OnPlay", "operation": "Draw", "amount": 1}
+      ]
+    },
+    {"id": 231, "card_id": 11012110, "abilities": "FLAG_RUSH",
+      "effects": [
+        {"trigger": "OnEnter", "operation": "Buff", "target": "Self", "amount": 2, "health_modifier": 1, "condition": "OtherOwnCostOneCards", "threshold": 2}
+      ]
+    },
+    {"id": 232, "card_id": 10011110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 2, "card_id": 90011110}
+      ]
+    },
+    {"id": 233, "card_id": 10011120,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "AddCombo", "amount": 1}
+      ]
+    },
+    {"id": 234, "card_id": 10011210, "countdown": 2,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 1, "card_id": 90011110},
+        {"trigger": "OnFollowerEntered", "operation": "Damage", "target": "RandomEnemyFollower", "amount": 1, "condition": "EventFairy"}
+      ]
+    },
+    {"id": 235, "card_id": 10511110, "abilities": "kAmbush",
+      "effects": [
+        {"trigger": "OnEvolve", "operation": "Draw", "amount": 1}
+      ]
+    },
+    {"id": 236, "card_id": 10511310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "SplitDamage", "amount": 3},
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 1, "card_id": 90011110}
+      ]
+    },
+    {"id": 237, "card_id": 10512110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Custom", "target": "Self", "handler": "BuddingBuddies", "card_id": 10512110, "condition": "Combo", "threshold": 5}
+      ]
+    },
+    {"id": 238, "card_id": 10514110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Buff", "target": "Self", "magnitude": "Combo"},
+        {"trigger": "OnEvolve", "operation": "Discard", "amount": 9},
+        {"trigger": "OnEvolve", "operation": "Custom", "amount": 5, "handler": "CopyEnemyDeck"}
+      ]
+    },
+    {"id": 239, "card_id": 10612110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 1, "card_id": 90011120}
+      ]
+    },
+    {"id": 240, "card_id": 10712110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Buff", "target": "Self", "granted_abilities": "FLAG_STORM", "condition": "Combo", "threshold": 3}
+      ]
+    },
+    {"id": 241, "card_id": 10812110, "once_per_own_turn": true,
+      "effects": [
+        {"trigger": "OnBuffed", "operation": "Summon", "amount": 1, "card_id": 90011110},
+        {"trigger": "LastWords", "operation": "AddHand", "amount": 1, "card_id": 90011110}
+      ]
+    },
+    {"id": 242, "card_id": 10814120, "enhance_cost": 4, "abilities": "FLAG_RUSH", "once_per_own_turn": true,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Buff", "target": "AllOwnFollowers", "amount": 1, "health_modifier": 1, "mode": 4},
+        {"trigger": "OnBuffed", "operation": "AddHand", "amount": 1, "card_id": 90014110}
+      ]
+    },
+    {"id": 243, "card_id": 10912110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 1, "card_id": 90011110, "condition": "BelowCombo", "threshold": 3},
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 1, "card_id": 90011110, "granted_abilities": "kBane", "condition": "Combo", "threshold": 3}
+      ]
+    },
+    {"id": 244, "card_id": 10912310, "modes": 2, "full_combo_modes": 3,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "RandomEnemyFollower", "amount": 4, "mode": 1},
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 1, "card_id": 90011310, "mode": 2},
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 1, "card_id": 90011110, "mode": 2}
+      ]
+    },
+    {"id": 245, "card_id": 10913110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Draw", "amount": 2, "condition": "Combo", "threshold": 3},
+        {"trigger": "OnEvolve", "operation": "Buff", "target": "ChosenOtherOwnFollower", "amount": 1, "health_modifier": 1, "granted_abilities": "FLAG_RUSH"}
+      ]
+    },
+    {"id": 246, "card_id": 11011110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 90001210},
+        {"trigger": "OnEvolve", "operation": "Heal", "target": "OwnLeader", "amount": 2, "condition": "OwnCostOneCards", "threshold": 2}
+      ]
+    },
+    {"id": 247, "card_id": 11012310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 90001210},
+        {"trigger": "OnPlay", "operation": "GrantCrest", "crest": "Beasts"}
+      ]
+    },
+    {"id": 248, "card_id": 10512310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "AllEnemyFollowersAndLeader", "amount": 1, "condition": "BelowCombo", "threshold": 3},
+        {"trigger": "OnPlay", "operation": "Damage", "target": "AllEnemyFollowersAndLeader", "amount": 2, "condition": "Combo", "threshold": 3}
+      ]
+    },
+    {"id": 249, "card_id": 10513310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Draw", "magnitude": "Combo"}
+      ]
+    },
+    {"id": 250, "card_id": 10514120, "modes": 3, "evolve_modes": true,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 2, "card_id": 90011110, "mode": 1},
+        {"trigger": "OnPlay", "operation": "RestorePp", "amount": 2, "mode": 2},
+        {"trigger": "OnPlay", "operation": "SplitDamage", "amount": 3, "mode": 3},
+        {"trigger": "OnEvolve", "operation": "AddHand", "amount": 2, "card_id": 90011110, "mode": 1},
+        {"trigger": "OnEvolve", "operation": "RestorePp", "amount": 2, "mode": 2},
+        {"trigger": "OnEvolve", "operation": "SplitDamage", "amount": 3, "mode": 3}
+      ]
+    },
+    {"id": 251, "card_id": 10611120,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "AutoEvolve", "target": "Self", "condition": "Combo", "threshold": 3}
+      ]
+    },
+    {"id": 252, "card_id": 10613310, "modes": 2,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Destroy", "target": "StrongestEnemyFollower", "mode": 1},
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 90011120, "mode": 2}
+      ]
+    },
+    {"id": 253, "card_id": 10713110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "ChosenEnemyFollower", "magnitude": "SourceAttack"},
+        {"trigger": "TurnEnd", "operation": "Draw", "amount": 1, "condition": "Combo", "threshold": 3}
+      ]
+    },
+    {"id": 254, "card_id": 10811120,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 2, "card_id": 90011110},
+        {"trigger": "OnEvolve", "operation": "Summon", "amount": 2, "card_id": 90011110}
+      ]
+    },
+    {"id": 255, "card_id": 10911210,
+      "effects": [
+        {"trigger": "OnEnemyFollowerEntered", "operation": "Destroy", "target": "EnemyEventFollower"},
+        {"trigger": "OnEnemyFollowerEntered", "operation": "Destroy", "target": "Self"}
+      ]
+    },
+    {"id": 256, "card_id": 10912120,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Custom", "handler": "CopyEnemyHand"},
+        {"trigger": "OnEvolve", "operation": "Custom", "handler": "CopyEnemyHand"}
+      ]
+    },
+    {"id": 257, "card_id": 10914110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "ChosenEnemyFollower", "amount": 4, "condition": "BelowCombo", "threshold": 3},
+        {"trigger": "OnPlay", "operation": "Damage", "target": "AllEnemyFollowers", "amount": 4, "condition": "Combo", "threshold": 3},
+        {"trigger": "OnSuperEvolve", "operation": "Buff", "target": "Self", "granted_abilities": "FLAG_STORM"}
+      ]
+    },
+    {"id": 258, "card_id": 11011310, "enhance_cost": 6,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "SummonEvolved", "amount": 1, "card_id": 90011110, "mode": 6},
+        {"trigger": "OnPlay", "operation": "SummonEvolved", "amount": 3, "card_id": 90011110, "mode": 4}
+      ]
+    },
+    {"id": 259, "card_id": 11012120,
+      "effects": [
+        {"trigger": "TurnEnd", "operation": "AddHand", "amount": 1, "card_id": 90011310},
+        {"trigger": "TurnEnd", "operation": "AddHand", "amount": 1, "card_id": 90011110}
+      ]
+    },
+    {"id": 260, "card_id": 11013310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "RandomEnemyFollower", "amount": 5},
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 1, "card_id": 11012110, "condition": "BelowOwnCostOneCards", "threshold": 2},
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 1, "card_id": 11012110, "granted_abilities": "FLAG_STORM", "condition": "OwnCostOneCards", "threshold": 2}
+      ]
+    },
+    {"id": 261, "card_id": 10011130,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "AutoEvolve", "target": "Self", "condition": "Combo", "threshold": 3},
+        {"trigger": "OnAttack", "operation": "Heal", "target": "OwnLeader", "amount": 2}
+      ]
+    },
+    {"id": 262, "card_id": 10611110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 1, "card_id": 90011120},
+        {"trigger": "OnEvolve", "operation": "Summon", "amount": 1, "card_id": 90011120}
+      ]
+    },
+    {"id": 263, "card_id": 10714110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Buff", "target": "ChosenEnemyFollower", "magnitude": "NegativeSourceAttack"},
+        {"trigger": "OnPlay", "operation": "AddCombo", "amount": 1},
+        {"trigger": "OnEvolve", "operation": "GrantCrest", "crest": "Dustdays"}
+      ]
+    },
+    {"id": 264, "card_id": 10812120, "abilities": ["FLAG_RUSH", "kBane"],
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 10813110}
+      ]
+    },
+    {"id": 265, "card_id": 10812310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Destroy", "target": "ChosenEnemyFollower"},
+        {"trigger": "OnPlay", "operation": "Heal", "target": "OwnLeader", "amount": 2}
+      ]
+    },
+    {"id": 266, "card_id": 10913310, "hand_end_combo": 3,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Destroy", "target": "ChosenEnemyFollower"},
+        {"trigger": "OnPlay", "operation": "Draw", "amount": 1}
+      ]
+    },
+    {"id": 267, "card_id": 11013110, "abilities": "FLAG_STORM",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 90001210},
+        {"trigger": "OnEvolve", "operation": "Summon", "amount": 1, "card_id": 11012110, "condition": "OwnCostOneCards", "threshold": 2}
+      ]
+    },
+    {"id": 268, "card_id": 10511120,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 90011110},
+        {"trigger": "OnFollowerEntered", "operation": "Damage", "target": "EnemyLeader", "amount": 1, "condition": "EventFairy"},
+        {"trigger": "OnEvolve", "operation": "Summon", "amount": 1, "card_id": 90011110}
+      ]
+    },
+    {"id": 269, "card_id": 10512120, "abilities": ["FLAG_RUSH", "kBane", "kDrain"]},
+    {"id": 270, "card_id": 10513110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 3, "card_id": 90011110},
+        {"trigger": "OnEvolve", "operation": "Summon", "amount": 3, "card_id": 90011110},
+        {"trigger": "OnSuperEvolve", "operation": "Buff", "target": "AllOwnFairyFollowers", "granted_abilities": "kBane"}
+      ]
+    },
+    {"id": 271, "card_id": 10612310, "hand_evolve_discount": 1,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Draw", "amount": 2}
+      ]
+    },
+    {"id": 272, "card_id": 10613110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 90011120},
+        {"trigger": "OnAllyEvolved", "operation": "Heal", "target": "OwnLeader", "amount": 1}
+      ]
+    },
+    {"id": 273, "card_id": 10712120,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "ChosenEnemyFollower", "amount": 4},
+        {"trigger": "OnPlay", "operation": "AddCombo", "amount": 1},
+        {"trigger": "OnEvolve", "operation": "Damage", "target": "ChosenEnemyFollower", "amount": 4},
+        {"trigger": "OnEvolve", "operation": "AddCombo", "amount": 1}
+      ]
+    },
+    {"id": 274, "card_id": 10813310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Custom", "amount": 2, "handler": "SummonDeckDistinct", "threshold": 2},
+        {"trigger": "OnPlay", "operation": "Buff", "target": "AllOwnFollowers", "amount": 1, "health_modifier": 1}
+      ]
+    },
+    {"id": 275, "card_id": 10612120, "abilities": "FLAG_STORM"},
+    {"id": 276, "card_id": 10714120,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 2, "card_id": 90011310},
+        {"trigger": "TurnEnd", "operation": "SplitDamage", "magnitude": "SourceAttack"},
+        {"trigger": "OnSuperEvolve", "operation": "GrantCrest", "crest": "DeerKing"}
+      ]
+    },
+    {"id": 277, "card_id": 10813110, "abilities": "FLAG_WARD",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 10812120},
+        {"trigger": "OnPlay", "operation": "Buff", "target": "AllOwnFollowers", "granted_abilities": "kBarrier"}
+      ]
+    },
+    {"id": 278, "card_id": 11014110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 11013110},
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 11012110},
+        {"trigger": "OnSuperEvolve", "operation": "Buff", "target": "AllOtherOwnFollowers", "amount": 2}
+      ]
+    },
+    {"id": 279, "card_id": 10012120, "abilities": "FLAG_STORM",
+      "effects": [
+        {"trigger": "OnSuperEvolve", "operation": "Bounce", "target": "ChosenEnemyFollower"}
+      ]
+    },
+    {"id": 280, "card_id": 10611310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "AllEnemyFollowers", "amount": 4},
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 2, "card_id": 90011120}
+      ]
+    },
+    {"id": 281, "card_id": 10811110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Custom", "handler": "Marlon"}
+      ]
+    },
+    {"id": 282, "card_id": 10814110, "abilities": ["FLAG_STORM", "FLAG_WARD"],
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Destroy", "target": "ChosenEnemyFollower"},
+        {"trigger": "OnPlay", "operation": "Buff", "target": "AllOtherOwnFollowers", "amount": 1, "health_modifier": 1}
+      ]
+    },
+    {"id": 283, "card_id": 10911120, "abilities": "kIntimidate"},
+    {"id": 284, "card_id": 11011120, "abilities": "FLAG_RUSH",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 2, "card_id": 11011120},
+        {"trigger": "OnEvolve", "operation": "Summon", "amount": 2, "card_id": 11011120}
+      ]
+    },
+    {"id": 285, "card_id": 10021110, "abilities": "FLAG_STORM"},
+    {"id": 286, "card_id": 10622310, "enhance_cost": 3,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "GrantCrest", "crest": "March"},
+        {"trigger": "OnPlay", "operation": "ExtendCrest", "amount": 2, "crest": "March", "mode": 4}
+      ]
+    },
+    {"id": 287, "card_id": 10623310, "modes": 2, "enhance_cost": 3, "enhanced_all_modes": true,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Draw", "amount": 1, "mode": 1},
+        {"trigger": "OnPlay", "operation": "Damage", "target": "RandomEnemyFollower", "amount": 3, "mode": 2}
+      ]
+    },
+    {"id": 288, "card_id": 10721310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "ChosenEnemyFollower", "amount": 3},
+        {"trigger": "OnPlay", "operation": "TemporaryAbilities", "target": "ChosenEnemyFollower", "amount": 1, "granted_abilities": "kAttackBlocked", "condition": "Rally", "threshold": 10}
+      ]
+    },
+    {"id": 289, "card_id": 10722310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 1, "card_id": 90021120, "granted_abilities": "FLAG_RUSH", "condition": "BelowRally", "threshold": 10},
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 2, "card_id": 90021120, "granted_abilities": "FLAG_RUSH", "condition": "Rally", "threshold": 10}
+      ]
+    },
+    {"id": 290, "card_id": 11023310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 90001210},
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 11021110, "condition": "EvidenceActed"}
+      ]
+    },
+    {"id": 291, "card_id": 10021310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "ReturnToDeck", "target": "ChosenOwnHand"},
+        {"trigger": "OnPlay", "operation": "DrawFiltered", "amount": 2, "filter": "RoyalFollower"}
+      ]
+    },
+    {"id": 292, "card_id": 10022110,
+      "effects": [
+        {"trigger": "LastWords", "operation": "Summon", "amount": 1, "card_id": 90021110}
+      ]
+    },
+    {"id": 293, "card_id": 10521310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Discard", "target": "ChosenOwnSpell"},
+        {"trigger": "OnPlay", "operation": "Damage", "target": "RandomEnemyFollower", "amount": 3},
+        {"trigger": "OnPlay", "operation": "Damage", "target": "RandomEnemyFollower", "amount": 3}
+      ]
+    },
+    {"id": 294, "card_id": 10522310, "enhance_cost": 4,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 2, "card_id": 90021110, "mode": 6},
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 4, "card_id": 90021110, "mode": 4}
+      ]
+    },
+    {"id": 295, "card_id": 10621110, "enhance_cost": 3, "abilities": "FLAG_RUSH",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Buff", "target": "Self", "amount": 1, "health_modifier": 1, "mode": 4}
+      ]
+    },
+    {"id": 296, "card_id": 10624120, "faith_id": 10624122,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 1, "card_id": 90024320},
+        {"trigger": "OnEvolve", "operation": "UpgradeFaith", "amount": 5}
+      ]
+    },
+    {"id": 297, "card_id": 10722110,
+      "effects": [
+        {"trigger": "LastWords", "operation": "Summon", "amount": 1, "card_id": 90021110},
+        {"trigger": "OnEvolve", "operation": "Damage", "target": "ChosenEnemyFollower", "amount": 3}
+      ]
+    },
+    {"id": 298, "card_id": 10821120, "abilities": "kAmbush",
+      "effects": [
+        {"trigger": "OnEvolve", "operation": "TemporaryAbilities", "target": "ChosenEnemyFollower", "amount": 1, "granted_abilities": "kAttackBlocked"}
+      ]
+    },
+    {"id": 299, "card_id": 10823310, "modes": 2, "full_board_modes": 2,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "RandomEnemyFollower", "amount": 4, "mode": 1},
+        {"trigger": "OnPlay", "operation": "Heal", "target": "OwnLeader", "amount": 2, "mode": 2}
+      ]
+    },
+    {"id": 300, "card_id": 10921110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 90021210},
+        {"trigger": "OnEvolve", "operation": "AddHand", "amount": 1, "card_id": 90021330}
+      ]
+    },
+    {"id": 301, "card_id": 10921310, "enhance_cost": 6,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 90021120, "granted_abilities": "FLAG_WARD", "mode": 6},
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 5, "card_id": 90021120, "granted_abilities": "FLAG_WARD", "mode": 4}
+      ]
+    },
+    {"id": 302, "card_id": 11021110, "abilities": "FLAG_RUSH", "enhance_cost": 4, "hand_swap_on_evidence": true,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Custom", "target": "Self", "handler": "CopySource", "mode": 4},
+        {"trigger": "LastWords", "operation": "Summon", "amount": 1, "card_id": 90001210}
+      ]
+    },
+    {"id": 303, "card_id": 11022310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "ChosenEnemyFollower", "amount": 5, "condition": "EvidenceUnused"},
+        {"trigger": "OnPlay", "operation": "Damage", "target": "ChosenEnemyFollower", "amount": 10, "condition": "EvidenceActed"}
+      ]
+    },
+    {"id": 304, "card_id": 10022120,
+      "effects": [
+        {"trigger": "OnSuperEvolve", "operation": "DrawNamed", "card_id": 10022120, "granted_abilities": "FLAG_STORM"}
+      ]
+    },
+    {"id": 305, "card_id": 10521120,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Buff", "target": "Self", "amount": 1, "health_modifier": 1, "granted_abilities": "FLAG_WARD", "condition": "HandSpells", "threshold": 2},
+        {"trigger": "OnEvolve", "operation": "AddHand", "amount": 1, "card_id": 90021350}
+      ]
+    },
+    {"id": 306, "card_id": 10523310, "enhance_cost": 5,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 2, "card_id": 90021350, "mode": 6},
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 4, "card_id": 90021350, "mode": 4}
+      ]
+    },
+    {"id": 307, "card_id": 10622110, "enhance_cost": 4, "abilities": "FLAG_WARD",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Buff", "target": "Self", "amount": 2, "health_modifier": 2, "mode": 4},
+        {"trigger": "OnEvolve", "operation": "Damage", "target": "ChosenEnemyFollower", "amount": 3}
+      ]
+    },
+    {"id": 308, "card_id": 10721110, "hand_super_cost": 1,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "ChosenEnemyFollower", "amount": 3}
+      ]
+    },
+    {"id": 309, "card_id": 10721120,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 90021110},
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 1, "card_id": 90021120}
+      ]
+    },
+    {"id": 310, "card_id": 10723310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "ChosenEnemyFollower", "amount": 6},
+        {"trigger": "OnPlay", "operation": "Damage", "target": "AllEnemyFollowers", "magnitude": "OwnFollowers", "condition": "Rally", "threshold": 10}
+      ]
+    },
+    {"id": 311, "card_id": 10822110, "once_per_own_turn": true,
+      "effects": [
+        {"trigger": "OnOtherPlay", "operation": "Damage", "target": "RandomEnemyFollower", "amount": 2, "condition": "EventSpell"},
+        {"trigger": "OnEvolve", "operation": "AddHand", "amount": 1, "card_id": 90021350}
+      ]
+    },
+    {"id": 312, "card_id": 10823110, "abilities": "FLAG_RUSH",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "AutoEvolve", "target": "Self", "condition": "SuperTurn"},
+        {"trigger": "OnAttack", "operation": "Custom", "target": "ChosenEnemyFollower", "amount": 3, "handler": "RepeatedAttackDamage", "condition": "FollowerAttack"}
+      ]
+    },
+    {"id": 313, "card_id": 10922110, "abilities": "FLAG_RUSH",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 90021210},
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 1, "card_id": 90021320}
+      ]
+    },
+    {"id": 314, "card_id": 10922310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "ChosenEnemyFollower", "amount": 5},
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 1, "card_id": 10922310, "cost_override": 1, "condition": "EffectiveCost", "threshold": 3}
+      ]
+    },
+    {"id": 315, "card_id": 11022110, "hand_swap_on_evidence": true,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "ChosenEnemyFollower", "magnitude": "SourceAttack"},
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 90001210},
+        {"trigger": "OnEvolve", "operation": "Summon", "amount": 1, "card_id": 11021110}
+      ]
+    },
+    {"id": 316, "card_id": 11024120,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 1, "card_id": 90021350},
+        {"trigger": "OnEvolve", "operation": "GrantCrest", "crest": "Almerize"},
+        {"trigger": "OnSuperEvolve", "operation": "ExtendCrest", "amount": 2, "crest": "Almerize"}
+      ]
+    },
+    {"id": 317, "card_id": 10021120, "abilities": "FLAG_RUSH",
+      "effects": [
+        {"trigger": "LastWords", "operation": "Draw", "amount": 1}
+      ]
+    },
+    {"id": 318, "card_id": 10022210, "countdown": 4,
+      "effects": [
+        {"trigger": "OnFollowerEntered", "operation": "Buff", "target": "EventFollower", "amount": 1, "health_modifier": 1}
+      ]
+    },
+    {"id": 319, "card_id": 10523110, "abilities": "kAttackBlocked",
+      "effects": [
+        {"trigger": "TurnEnd", "operation": "Summon", "amount": 1, "card_id": 90021120},
+        {"trigger": "OnSuperEvolve", "operation": "Buff", "target": "AllOtherOwnFollowers", "amount": 3, "health_modifier": 3}
+      ]
+    },
+    {"id": 320, "card_id": 10621120,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "ReturnToDeck", "target": "ChosenOwnHand"},
+        {"trigger": "OnPlay", "operation": "DrawFiltered", "amount": 2, "filter": "RoyalFollower"}
+      ]
+    },
+    {"id": 321, "card_id": 10623110, "enhance_cost": 6,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Destroy", "target": "ChosenEnemyFollower"},
+        {"trigger": "OnPlay", "operation": "RestorePp", "amount": 3, "mode": 4},
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 1, "card_id": 10621110, "mode": 4}
+      ]
+    },
+    {"id": 322, "card_id": 10724110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "GrantCrest", "crest": "Gildaria", "condition": "Rally", "threshold": 20},
+        {"trigger": "OnPlay", "operation": "AutoEvolve", "target": "Self", "condition": "Rally", "threshold": 20},
+        {"trigger": "OnFollowerEntered", "operation": "Buff", "target": "EventFollower", "granted_abilities": "FLAG_RUSH", "condition": "OwnTurn"},
+        {"trigger": "OnEvolved", "operation": "Summon", "amount": 2, "card_id": 90021120}
+      ]
+    },
+    {"id": 323, "card_id": 10821130,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 90021120, "granted_abilities": "FLAG_RUSH"},
+        {"trigger": "OnEvolve", "operation": "Summon", "amount": 1, "card_id": 90021120, "granted_abilities": "FLAG_WARD"}
+      ]
+    },
+    {"id": 324, "card_id": 10822310, "enhance_cost": 6,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Buff", "target": "StrongestEnemyFollower", "amount": -10, "health_modifier": -10},
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 3, "card_id": 90022110, "mode": 4}
+      ]
+    },
+    {"id": 325, "card_id": 10921120, "abilities": ["FLAG_RUSH", "FLAG_WARD"]},
+    {"id": 326, "card_id": 10923310, "enhance_cost": 6,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 90021210, "mode": 6},
+        {"trigger": "OnPlay", "operation": "Damage", "target": "AllEnemyFollowers", "amount": 2, "mode": 6},
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 2, "card_id": 90021210, "mode": 4},
+        {"trigger": "OnPlay", "operation": "Damage", "target": "AllEnemyFollowers", "amount": 4, "mode": 4}
+      ]
+    },
+    {"id": 327, "card_id": 10524120,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Banish", "target": "ChosenEnemyFollower"},
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 1, "card_id": 90021350},
+        {"trigger": "OnSuperEvolve", "operation": "GrantCrest", "crest": "Unkei"}
+      ]
+    },
+    {"id": 328, "card_id": 10621310, "enhance_cost": 7,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 3, "card_id": 10621110, "mode": 6},
+        {"trigger": "OnPlay", "operation": "Custom", "amount": 3, "handler": "EnhanceTroops", "card_id": 10621110, "health_modifier": 2, "threshold": 2, "mode": 4}
+      ]
+    },
+    {"id": 329, "card_id": 10722120,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Draw", "amount": 2},
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 2, "card_id": 90021110},
+        {"trigger": "OnEvolve", "operation": "Damage", "target": "ChosenEnemyFollower", "amount": 3}
+      ]
+    },
+    {"id": 330, "card_id": 10723110, "modes": 2,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 3, "card_id": 90021110},
+        {"trigger": "OnPlay", "operation": "Buff", "target": "AllOtherOwnFollowers", "amount": 1, "granted_abilities": "FLAG_RUSH", "mode": 1},
+        {"trigger": "OnPlay", "operation": "Buff", "target": "AllOtherOwnFollowers", "health_modifier": 1, "granted_abilities": "FLAG_WARD", "mode": 2}
+      ]
+    },
+    {"id": 331, "card_id": 10824110, "abilities": "FLAG_RUSH",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 10824110},
+        {"trigger": "OnPlay", "operation": "Damage", "target": "EnemyLeader", "amount": 4, "condition": "Rally", "threshold": 20},
+        {"trigger": "OnEvolve", "operation": "AddHand", "amount": 1, "card_id": 90024330}
+      ]
+    },
+    {"id": 332, "card_id": 10922120, "enhance_cost": 7,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 2, "card_id": 90021120, "mode": 6},
+        {"trigger": "OnPlay", "operation": "Custom", "target": "Self", "amount": 2, "handler": "EnhanceTroops", "card_id": 90021120, "threshold": 3, "granted_abilities": "FLAG_RUSH", "mode": 4}
+      ]
+    },
+    {"id": 333, "card_id": 10923110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "ChosenEnemyFollower", "amount": 3},
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 90021210},
+        {"trigger": "OnEvolve", "operation": "Damage", "target": "ChosenEnemyFollower", "amount": 3},
+        {"trigger": "OnEvolve", "operation": "Summon", "amount": 1, "card_id": 90021210},
+        {"trigger": "OnSuperEvolve", "operation": "AddHand", "amount": 1, "card_id": 90021310, "cost_override": 0},
+        {"trigger": "OnSuperEvolve", "operation": "AddHand", "amount": 1, "card_id": 90021340, "cost_override": 0}
+      ]
+    },
+    {"id": 334, "card_id": 11021120, "once_per_own_turn": true,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "AddHand", "amount": 1, "card_id": 90021340},
+        {"trigger": "OnOtherPlay", "operation": "Damage", "target": "AllEnemyFollowersAndLeader", "amount": 2, "condition": "EventSpell"}
+      ]
+    },
+    {"id": 335, "card_id": 10521110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Custom", "target": "ChosenOwnHand", "amount": 3, "handler": "DiscardAndHeal"}
+      ]
+    },
+    {"id": 336, "card_id": 10522110, "abilities": "FLAG_RUSH", "drawn_cost": 3,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Draw", "amount": 1},
+        {"trigger": "OnPlay", "operation": "Heal", "target": "OwnLeader", "amount": 3}
+      ]
+    },
+    {"id": 337, "card_id": 10624110, "enhance_cost": 7, "next_enhance_cost": 8,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 10621110, "granted_abilities": "kBane"},
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 10621110, "granted_abilities": "kDrain", "condition": "EnhanceAtLeast", "threshold": 7},
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 10621110, "granted_abilities": "FLAG_STORM", "condition": "EnhanceAtLeast", "threshold": 8},
+        {"trigger": "OnSuperEvolve", "operation": "Buff", "target": "AllOtherOwnFollowers", "amount": 1, "health_modifier": 1}
+      ]
+    },
+    {"id": 338, "card_id": 11023110, "hand_swap_on_evidence": true,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Custom", "target": "Self", "amount": 2, "handler": "NewspaperCopies", "card_id": 11021110},
+        {"trigger": "OnEvolve", "operation": "Buff", "target": "AllOtherOwnFollowers", "granted_abilities": "kBane"}
+      ]
+    },
+    {"id": 339, "card_id": 10522120,
+      "effects": [
+        {"trigger": "TurnEnd", "operation": "Damage", "target": "AllEnemyFollowers", "amount": 5, "condition": "HandSpells", "threshold": 2},
+        {"trigger": "OnEvolve", "operation": "AddHand", "amount": 2, "card_id": 90021350}
+      ]
+    },
+    {"id": 340, "card_id": 10724120, "abilities": "FLAG_WARD",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 2, "card_id": 90021120},
+        {"trigger": "OnPlay", "operation": "Buff", "target": "AllOtherOwnRoyalFollowers", "amount": 1, "health_modifier": 3, "granted_abilities": "FLAG_WARD"},
+        {"trigger": "OnSuperEvolve", "operation": "Destroy", "target": "ChosenEnemyFollower"}
+      ]
+    },
+    {"id": 341, "card_id": 10821110,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 90021130},
+        {"trigger": "OnPlay", "operation": "Damage", "target": "AllEnemyFollowers", "amount": 3},
+        {"trigger": "OnSuperEvolve", "operation": "Summon", "amount": 1, "card_id": 90021130},
+        {"trigger": "OnSuperEvolve", "operation": "Damage", "target": "AllEnemyFollowers", "amount": 3}
+      ]
+    },
+    {"id": 342, "card_id": 10924110, "abilities": "FLAG_STORM",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Summon", "amount": 1, "card_id": 90021210},
+        {"trigger": "OnPlay", "operation": "ReduceCountdown", "target": "AllOwnNamedCards", "amount": 5, "card_id": 90021210}
+      ]
+    },
+    {"id": 343, "card_id": 11021310,
+      "effects": [
+        {"trigger": "OnPlay", "operation": "SummonEvolved", "amount": 2, "card_id": 90021120, "granted_abilities": "kBarrier"}
+      ]
+    },
+    {"id": 344, "card_id": 11022120, "abilities": "FLAG_WARD",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Banish", "target": "ChosenEnemyFollower", "condition": "OwnAmulets", "threshold": 1},
+        {"trigger": "OnSuperEvolve", "operation": "Banish", "target": "ChosenEnemyFollower", "condition": "OwnAmulets", "threshold": 1}
+      ]
+    },
+    {"id": 345, "card_id": 90011110, "name": "フェアリー", "class_name": "エルフ", "kind": "Follower", "cost": 1, "atk": 1, "hp": 1, "traits": ["妖精"], "deck_eligible": false, "abilities": "FLAG_RUSH", "text": "突進。"},
+    {"id": 346, "card_id": 90011120, "name": "新緑のフェアリー", "class_name": "エルフ", "kind": "Follower", "cost": 2, "atk": 1, "hp": 1, "traits": ["妖精"], "deck_eligible": false, "abilities": "FLAG_WARD", "text": "守護。自分のターン終了時に自動進化。",
+      "effects": [
+        {"trigger": "TurnEnd", "operation": "AutoEvolve", "target": "Self"}
+      ]
+    },
+    {"id": 347, "card_id": 90011310, "name": "森の神秘", "class_name": "エルフ", "kind": "Spell", "cost": 0, "atk": 0, "hp": 0, "traits": [], "deck_eligible": false, "text": "自分のリーダーを1回復。",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Heal", "target": "OwnLeader", "amount": 1}
+      ]
+    },
+    {"id": 348, "card_id": 90014110, "name": "ソードクリスタリア・イヴ", "class_name": "エルフ", "kind": "Follower", "cost": 3, "atk": 3, "hp": 3, "traits": [], "deck_eligible": false, "abilities": ["FLAG_STORM", "FLAG_WARD"], "text": "疾走と守護。"},
+    {"id": 349, "card_id": 90014330, "name": "天槍の深淵", "class_name": "エルフ", "kind": "Spell", "cost": 1, "atk": 0, "hp": 0, "traits": ["アサイラント"], "deck_eligible": false, "text": "選んだ自分の未進化フォロワーを進化させる。",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "AutoEvolve", "target": "ChosenUnevolvedOwnFollower"}
+      ]
+    },
+    {"id": 350, "card_id": 90021110, "name": "ナイト", "class_name": "ロイヤル", "kind": "Follower", "cost": 0, "atk": 1, "hp": 1, "traits": ["兵士"], "deck_eligible": false},
+    {"id": 351, "card_id": 90021120, "name": "スティールナイト", "class_name": "ロイヤル", "kind": "Follower", "cost": 1, "atk": 2, "hp": 2, "traits": ["兵士"], "deck_eligible": false},
+    {"id": 352, "card_id": 90021130, "name": "ナハトの私兵", "class_name": "ロイヤル", "kind": "Follower", "cost": 3, "atk": 4, "hp": 4, "traits": ["兵士"], "deck_eligible": false},
+    {"id": 353, "card_id": 90021210, "name": "戦慄の海賊旗", "class_name": "ロイヤル", "kind": "Amulet", "cost": 1, "atk": 0, "hp": 0, "traits": [], "deck_eligible": false, "countdown": 7, "text": "CD7。スペルをプレイするごとにCDを1減らし、破壊時に相手リーダーへ2ダメージ。",
+      "effects": [
+        {"trigger": "OnOtherPlay", "operation": "ReduceCountdown", "target": "Self", "amount": 1, "condition": "EventSpell"},
+        {"trigger": "LastWords", "operation": "Damage", "target": "EnemyLeader", "amount": 2}
+      ]
+    },
+    {"id": 354, "card_id": 90021310, "name": "黄金の小剣", "class_name": "ロイヤル", "kind": "Spell", "cost": 1, "atk": 0, "hp": 0, "traits": ["財宝"], "deck_eligible": false, "text": "選んだ相手フォロワーか相手リーダーに1ダメージ。",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "ChosenEnemyOrLeader", "amount": 1}
+      ]
+    },
+    {"id": 355, "card_id": 90021320, "name": "黄金の杯", "class_name": "ロイヤル", "kind": "Spell", "cost": 1, "atk": 0, "hp": 0, "traits": ["財宝"], "deck_eligible": false, "text": "自分のリーダーを2回復。",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Heal", "target": "OwnLeader", "amount": 2}
+      ]
+    },
+    {"id": 356, "card_id": 90021330, "name": "黄金の靴", "class_name": "ロイヤル", "kind": "Spell", "cost": 1, "atk": 0, "hp": 0, "traits": ["財宝"], "deck_eligible": false, "text": "味方1体の攻撃力を1上げ、突進を付与。",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Buff", "target": "ChosenOwnFollower", "amount": 1, "granted_abilities": "FLAG_RUSH"}
+      ]
+    },
+    {"id": 357, "card_id": 90021340, "name": "黄金の首飾り", "class_name": "ロイヤル", "kind": "Spell", "cost": 1, "atk": 0, "hp": 0, "traits": ["財宝"], "deck_eligible": false, "text": "味方1体の体力を1上げ、守護を付与。",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Buff", "target": "ChosenOwnFollower", "health_modifier": 1, "granted_abilities": "FLAG_WARD"}
+      ]
+    },
+    {"id": 358, "card_id": 90021350, "name": "輝く金貨", "class_name": "ロイヤル", "kind": "Spell", "cost": 0, "atk": 0, "hp": 0, "traits": [], "deck_eligible": false, "modes": 2, "text": "（1）1枚ドロー。\n（2）ランダムな相手フォロワーに2ダメージ。",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Draw", "amount": 1, "mode": 1},
+        {"trigger": "OnPlay", "operation": "Damage", "target": "RandomEnemyFollower", "amount": 2, "mode": 2}
+      ]
+    },
+    {"id": 359, "card_id": 90022110, "name": "異形", "class_name": "ロイヤル", "kind": "Follower", "cost": 2, "atk": 4, "hp": 1, "traits": [], "deck_eligible": false, "abilities": "FLAG_RUSH", "text": "突進。"},
+    {"id": 360, "card_id": 90024320, "name": "天剣の深淵", "class_name": "ロイヤル", "kind": "Spell", "cost": 0, "atk": 0, "hp": 0, "traits": ["アサイラント"], "deck_eligible": false, "enhance_cost": 1, "text": "選んだ相手フォロワーに1ダメージ。エンハンス1で3ダメージ。",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "ChosenEnemyFollower", "amount": 1, "mode": 6},
+        {"trigger": "OnPlay", "operation": "Damage", "target": "ChosenEnemyFollower", "amount": 3, "mode": 4}
+      ]
+    },
+    {"id": 361, "card_id": 90024330, "name": "デスペラードショット", "class_name": "ロイヤル", "kind": "Spell", "cost": 1, "atk": 0, "hp": 0, "traits": [], "deck_eligible": false, "text": "ランダムな相手フォロワーに4ダメージを2回。",
+      "effects": [
+        {"trigger": "OnPlay", "operation": "Damage", "target": "RandomEnemyFollower", "amount": 4},
+        {"trigger": "OnPlay", "operation": "Damage", "target": "RandomEnemyFollower", "amount": 4}
+      ]
+    },
+    {"id": 362, "card_id": 10614122, "name": "旧き天槍・ササニド", "class_name": "エルフ", "kind": "Faith", "cost": 0, "deck_eligible": false, "faith_trigger": "OnAllyEvolved",
+      "effects": [
+        {"trigger": "OnAllyEvolved", "operation": "Damage", "target": "EnemyLeader", "amount": 1}
+      ]
+    },
+    {"id": 363, "card_id": 10624122, "name": "旧き天剣・イドメタ", "class_name": "ロイヤル", "kind": "Faith", "cost": 0, "deck_eligible": false, "faith_trigger": "OnEnhanced",
+      "effects": [
+        {"trigger": "OnEnhanced", "operation": "Buff", "target": "AllOwnFollowers", "amount": 1, "health_modifier": 1}
+      ]
+    }
+  ],
+  "crests": [
+    {"id": "Shrink", "special_effect_id": 10712312, "clock": "Start",
+      "effects": [
+        {"trigger": "LastWords", "operation": "AddHand", "amount": 1, "card_id": 10713310}
+      ]
+    },
+    {"id": "Expand", "special_effect_id": 10713312, "clock": "Start",
+      "effects": [
+        {"trigger": "LastWords", "operation": "AddHand", "amount": 1, "card_id": 10712310}
+      ]
+    },
+    {"id": "Dustdays", "special_effect_id": 10714112, "clock": "Start",
+      "effects": [
+        {"trigger": "TurnEnd", "operation": "BuffDeck", "amount": 1, "health_modifier": 1, "condition": "Combo", "threshold": 3}
+      ]
+    },
+    {"id": "DeerKing", "special_effect_id": 10714122, "clock": "Start",
+      "effects": [
+        {"trigger": "TurnEnd", "operation": "AddHand", "amount": 1, "card_id": 90011310, "condition": "Combo", "threshold": 3}
+      ]
+    },
+    {"id": "Beasts", "special_effect_id": 11012312, "clock": "Start",
+      "effects": [
+        {"trigger": "TurnStart", "operation": "Summon", "amount": 1, "card_id": 11012110}
+      ]
+    },
+    {"id": "Unkei", "special_effect_id": 10524122, "clock": "Start",
+      "effects": [
+        {"trigger": "TurnEnd", "operation": "AddHand", "amount": 1, "card_id": 90021350}
+      ]
+    },
+    {"id": "March", "special_effect_id": 10622312, "clock": "Start",
+      "effects": [
+        {"trigger": "OnEnhanced", "operation": "Summon", "amount": 1, "card_id": 10621110}
+      ]
+    },
+    {"id": "Gildaria", "special_effect_id": 10724112, "clock": "Start",
+      "effects": [
+        {"trigger": "OnFollowerEntered", "operation": "Damage", "target": "EnemyLeader", "amount": 1, "condition": "OwnTurn"}
+      ]
+    },
+    {"id": "Almerize", "special_effect_id": 11024122, "clock": "Start",
+      "effects": [
+        {"trigger": "TurnEnd", "operation": "Custom", "handler": "AlmerizeSequence", "card_id": 90021310, "alternate_card_id": 90021320}
+      ]
+    }
+  ]
+}

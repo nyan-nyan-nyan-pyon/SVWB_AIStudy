@@ -191,7 +191,7 @@ GameState actions_json(std::ostream& out, const GameState& initial, std::span<co
             card_fields(out, hand ? player.hand[action.src] : player.board[action.src].card_id);
             if (action.type == ActionType::Play) {
                 const auto& card = *find_card(player.hand[action.src]);
-                if (card.enhance_cost && player.available_pp() >= card.enhance_cost) {
+                if (enhance_payment(card, player.available_pp())) {
                     out << ",\"form\":\"enhance\"";
                 } else if (player.available_pp() < card_cost(card, player.hand_modifiers[action.src])) {
                     if (card.crystal_form) out << ",\"form\":\"crystal\"";
@@ -217,7 +217,7 @@ GameState actions_json(std::ostream& out, const GameState& initial, std::span<co
             out << '}';
         }
         if (action.selection) {
-            const bool hand = action.type != ActionType::Play;
+            const bool hand = action.selection_in_hand || action.type != ActionType::Play;
             out << ",\"targets\":[";
             bool separate = false;
             for (int slot = 0; slot < (hand ? player.hand_count : player.board_count); ++slot) {

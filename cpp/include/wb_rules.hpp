@@ -12,7 +12,7 @@ inline constexpr CardId kFirstCard = 101;
 inline constexpr CardId kLastForm = 121;
 inline constexpr int kCardSlots = kLastForm - kFirstCard + 1;
 inline constexpr int kDeckCapacity = 80;
-inline constexpr int kAdditionalCardCounters = 96;
+inline constexpr int kAdditionalCardCounters = 128;
 using EntityId = std::uint32_t;
 inline constexpr int kOwnBoardTarget = kBoardLimit;
 inline constexpr int kOwnHandTarget = 2 * kBoardLimit;
@@ -52,7 +52,10 @@ enum class Evolution : std::uint8_t { None, Normal, Super };
 enum class Phase : std::uint8_t { Mulligan, Main };
 enum class Outcome : std::uint8_t { Ongoing, FirstWins, SecondWins, BothLose };
 enum class EndReason : std::uint8_t { None, Health, EmptyDeck, TurnLimit };
-enum class CrestId : std::uint8_t { None, Testimony, Rituel, Rapid, Haylem, Erralde, Kukishiro, Sisters };
+enum class CrestId : std::uint8_t {
+    None, Testimony, Rituel, Rapid, Haylem, Erralde, Kukishiro, Sisters,
+    Shrink, Expand, Dustdays, DeerKing, Beasts, Unkei, March, Gildaria, Almerize,
+};
 
 // Supplemental ability flags used by the extended combat and target rules.
 inline constexpr std::uint16_t kBane = 1 << 7;
@@ -72,6 +75,7 @@ struct CardModifiers {
     std::uint8_t spellboost;
     std::uint8_t fused_ply;
     std::uint8_t fused_materials;
+    std::int8_t temporary_cost_delta;
 
     bool operator==(const CardModifiers&) const = default;
 };
@@ -98,6 +102,7 @@ struct Permanent {
     std::uint8_t expires_end_ply;
     std::uint8_t sequence;
     bool banish_at_end;
+    std::uint8_t last_trigger_ply;
 
     bool operator==(const Permanent&) const = default;
 };
@@ -106,6 +111,7 @@ struct Crest {
     EntityId creation_order;
     CrestId id;
     std::uint8_t countdown;
+    std::uint8_t sequence;
 
     bool operator==(const Crest&) const = default;
 };
@@ -134,6 +140,8 @@ struct PlayerState {
     std::array<Permanent, kBoardLimit> board;
     std::array<Crest, kCrestLimit> crests;
     std::array<CardId, kCrestLimit> faiths;
+    std::array<std::uint16_t, kCrestLimit> faith_values;
+    std::array<std::uint8_t, kCrestLimit> faith_upgrades;
     std::array<NamedActions, kCardSlots> actions;
     std::array<std::uint16_t, kCardSlots> destroyed_followers; // By printed card; independent of shadows.
     std::array<std::uint16_t, kCardSlots> destroyed_amulets;
@@ -159,6 +167,7 @@ struct PlayerState {
     bool extra_pp_available;
     bool manual_evolved;
     bool leader_barrier;
+    bool acted_evidence;
 
     [[nodiscard]] int available_pp() const { return pp + bonus_pp; }
     [[nodiscard]] bool overflow() const { return max_pp >= 7; }
@@ -186,6 +195,7 @@ struct Action {
     std::int8_t dst = kNoTarget;
     std::uint8_t choice = 0; // One-based mode or a mulligan/fusion mask. Fusion skips the source slot.
     std::uint16_t selection = 0; // Slot mask for effects selecting multiple cards from one zone.
+    bool selection_in_hand = false;
 
     bool operator==(const Action&) const = default;
 };
@@ -231,6 +241,6 @@ void apply_legal_action(GameState& state, Action action, const RuleConfig& rules
 }
 
 static_assert(std::is_trivial_v<GameState> && std::is_standard_layout_v<GameState>);
-static_assert(sizeof(GameState) <= 4608);
+static_assert(sizeof(GameState) <= 5632);
 
 } // namespace svwb::wb

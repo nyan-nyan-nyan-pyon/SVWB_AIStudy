@@ -42,13 +42,15 @@ enum class Trigger : std::uint8_t {
     None, OnPlay, OnEnter, OnEvolve, OnSuperEvolve, OnEvolved, LastWords, OnAct,
     TurnStart, TurnEnd, EnemyTurnEnd, OnAttack, OnClash, OnDamage, OnFuse, OnDraw, OnLeaderHeal,
     OnOtherPlay, OnAmuletDestroyed, OnBanish, OnEnemyFollowerBanished,
+    OnFollowerEntered, OnEnemyFollowerEntered, OnAllyEvolved, OnBuffed, OnEnhanced,
 };
 enum class Operation : std::uint8_t {
     Damage, Heal, Draw, AddHand, Summon, SummonModified, SummonEvolved, ReduceCountdown, SpendClue,
     Silence, Banish, Destroy, Transform, Bounce, RestorePp, GrantCrest, ExtendCrest,
     Buff, ReturnToDeck, Copy, IncreaseMaxPp, Necromancy, EarthRite, AddEarth, Reanimate,
     GrantFaith, Discard, Custom, RestoreEp, RemoveAbilities, AutoEvolve, DrawFiltered,
-    AddCountdown, SummonEnemy, TemporaryAbilities,
+    AddCountdown, SummonEnemy, TemporaryAbilities, AddCombo, SplitDamage, BuffDeck,
+    DrawNamed, UpgradeFaith,
 };
 enum class Target : std::uint8_t {
     None, Self, OwnLeader, EnemyLeader, ChosenEnemyFollower, ChosenEnemyPermanent, AllEnemyFollowers,
@@ -58,11 +60,15 @@ enum class Target : std::uint8_t {
     AllOtherFollowers, AllEnemyFollowersAndLeader, AllOwnAmulets, AllSmallEnemyFollowers,
     RandomOtherEnemyFollower, StrongestEnemyFollower, AllNonAssailantFollowers,
     AttackingFollower, RandomEnemyTwo, RandomOtherUnevolvedWard,
+    EventFollower, EnemyEventFollower, ChosenOwnSpell, ChosenOwnHandTwo,
+    AllOwnFairyFollowers, AllOtherOwnRoyalFollowers, AllOwnNamedCards, ChosenUnevolvedOwnFollower, ChosenEnemyOrLeader,
 };
 enum class Condition : std::uint8_t {
     Always, Combo, Rally, Overflow, CostPaid, AtMaxPp, Fused, NotFused, OwnTurn, OwnAmulets,
     BoardCostAtLeast, OtherBoardCost, FollowerAttack, SelfEvolved, NormalEvolution,
     OwnSuper, OwnEvolvedWithoutSuper, PlayedOneThroughEight,
+    BelowCombo, BelowRally, OwnCostOneCards, OtherOwnCostOneCards, BelowOwnCostOneCards, EventFairy,
+    EventSpell, EvidenceActed, EvidenceUnused, HandSpells, SuperTurn, EnhanceAtLeast, EffectiveCost,
 };
 enum class CardHandler : std::uint8_t {
     None, EvolveWithAlly, BanishLowestAndEvolve, MatchPlayedCost, SequenceCity, SequenceOmerio,
@@ -70,9 +76,12 @@ enum class CardHandler : std::uint8_t {
     CopyEnemyHand, DiscardThenCopy, DrawDiscounted, DrawWardCount, NeutralHandDamage,
     AmuletHandDamage, DestroyAndReward, SummonFromDeckEvolved, DestroyedToHand, DestroyedToDeck,
     SummonDestroyedFollowers, SummonDestroyedAmulets, GrantAttackTwice, ReturnRandomHand,
+    BuddingBuddies, CopyEnemyDeck, SummonDeckDistinct, Marlon, AlmerizeSequence,
+    RepeatedAttackDamage, CopySource, NewspaperCopies, DiscardAndHeal, EnhanceTroops,
 };
 enum class FusionMaterial : std::uint8_t { None, Any, Follower, Spell, Amulet, SameClass, Trait };
-enum class DeckFilter : std::uint8_t { Any, Follower, Amulet, Neutral };
+enum class DeckFilter : std::uint8_t { Any, Follower, Amulet, Neutral, RoyalFollower };
+enum class Magnitude : std::uint8_t { Fixed, SourceAttack, NegativeSourceAttack, Combo, OwnFollowers };
 
 struct Effect {
     Trigger trigger = Trigger::None;
@@ -90,6 +99,9 @@ struct Effect {
     CardHandler handler = CardHandler::None;
     int spellboost_multiplier = 0;
     DeckFilter filter = DeckFilter::Any;
+    Magnitude magnitude = Magnitude::Fixed;
+    int cost_override = -1;
+    CardId alternate_card = 0;
 };
 
 struct CardDef {
@@ -125,6 +137,19 @@ struct CardDef {
     CardId base_form = 0;
     bool all_modes_with_high_cost = false;
     int super_evolve_hand_discount = 0;
+    int next_enhance_cost = 0;
+    int full_combo_modes = 0;
+    int full_board_modes = 0;
+    bool enhanced_all_modes = false;
+    bool evolve_modes = false;
+    int hand_evolve_discount = 0;
+    int hand_super_cost = -1;
+    int drawn_cost = -1;
+    int hand_end_combo = 0;
+    bool hand_swap_on_evidence = false;
+    bool once_per_own_turn = false;
+    CardId faith = 0;
+    Trigger faith_trigger = Trigger::None;
 };
 
 struct CrestDef {
@@ -143,7 +168,10 @@ struct CrestDef {
 [[nodiscard]] bool is_deck_card(CardId id);
 [[nodiscard]] Deck read_deck(const std::filesystem::path& path);
 [[nodiscard]] int card_cost(const CardDef& card, CardModifiers modifiers);
+[[nodiscard]] int enhance_payment(const CardDef& card, int pp);
 [[nodiscard]] std::span<const CardId> neutral_bishop_rotation();
+[[nodiscard]] std::span<const CardId> elf_rotation();
+[[nodiscard]] std::span<const CardId> royal_rotation();
 
 // Resolves already-selected effect steps in order, using Trigger::None for immediate steps.
 // Source and selected target are stable creation IDs, or zero when absent.

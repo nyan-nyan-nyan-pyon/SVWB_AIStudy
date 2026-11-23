@@ -98,9 +98,35 @@ def check_custom_decks(command, root):
     assert mappings[0] == mappings[1]
 
     unsupported = root / "unsupported.json"
-    unsupported.write_text(json.dumps({"cards": [{"card_id": 10614120, "copies": 1}]}), encoding="utf-8")
+    unsupported.write_text(json.dumps({"cards": [{"card_id": 4294967295, "copies": 1}]}), encoding="utf-8")
     failed = subprocess.run([*command, "--deck-a", unsupported], capture_output=True, encoding="utf-8", timeout=30)
     assert failed.returncode != 0 and "lacks playable engine rules" in failed.stderr
+
+
+def check_elf_royal_decks(command, root):
+    decks = {
+        "elf": [10614120, 10011120, 10011210, 10511310, 10512110, 10514110, 10612110,
+                10814120, 10714110, 10912310, 10912120, 10813310, 11012310, 11012110],
+        "royal": [10624120, 10021110, 10622310, 10623310, 10522310, 10621110, 10721120,
+                  10921110, 10922110, 11021110, 11024120, 10724110, 10624110, 11023310],
+    }
+    for faction, ids in decks.items():
+        (root / f"{faction}.json").write_text(json.dumps({
+            "cards": [{"card_id": id, "copies": 3 if index < 13 else 1} for index, id in enumerate(ids)]
+        }), encoding="utf-8")
+    logs = root / "elf-royal"
+    result = subprocess.run(
+        [*command, "--deck-a", root / "elf.json", "--deck-b", root / "royal.json", "--log-dir", logs],
+        check=True, capture_output=True, encoding="utf-8", timeout=30,
+    )
+    assert "games=4" in result.stdout and "feature_schema=wb-matchup-v1" in result.stdout
+    mapping = json.loads((logs / "matchup_features.json").read_text(encoding="utf-8"))
+    assert {10614120, 10624120, 10614122, 10624122, 90011110, 90021120, 90014330, 90024320, 90021320} <= {
+        card["official_id"] for card in mapping["cards"]
+    }
+    rows = list(SAMPLE.iter_unpack((logs / "val_log.bin").read_bytes()))
+    assert rows and all(0 < row[242] <= 1 and 0 < row[249] <= 1 for row in rows)
+    check_replay(logs)
 
 
 def main():
@@ -123,6 +149,7 @@ def main():
         assert re.search(r"A_first=2 A_second=2 A_wins=\d+ B_wins=\d+ draws=\d+", result.stdout)
         check_exports(root)
         check_custom_decks(command, root)
+        check_elf_royal_decks(command, root)
     print("PASS WB logs, balanced exports and seat-invariant local IDs")
 
 

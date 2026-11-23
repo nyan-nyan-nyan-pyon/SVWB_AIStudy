@@ -41,13 +41,27 @@ std::span<const CardId> neutral_bishop_rotation() {
     return rotation_batch;
 }
 
+std::span<const CardId> elf_rotation() {
+    return rotation_elf;
+}
+
+std::span<const CardId> royal_rotation() {
+    return rotation_royal;
+}
+
 bool is_deck_card(CardId id) {
     const auto* card = find_card(id);
     return card && card->implemented && card->deck_eligible;
 }
 
 int card_cost(const CardDef& card, CardModifiers modifiers) {
-    return std::max(0, card.cost + modifiers.cost - card.spellboost_cost_reduction * modifiers.spellboost);
+    return std::max(0, card.cost + modifiers.cost + modifiers.temporary_cost_delta -
+        card.spellboost_cost_reduction * modifiers.spellboost);
+}
+
+int enhance_payment(const CardDef& card, int pp) {
+    if (card.next_enhance_cost > 0 && pp >= card.next_enhance_cost) return card.next_enhance_cost;
+    return pp >= card.enhance_cost ? card.enhance_cost : 0;
 }
 
 Deck read_deck(const std::filesystem::path& path) {

@@ -1574,6 +1574,339 @@ int rotation_units() {
     }
 }
 
+void elf_royal_card_cases() {
+    CHECK(elf_rotation().size() == 63 && royal_rotation().size() == 60);
+    for (const auto group : {elf_rotation(), royal_rotation()}) {
+        for (const auto id : group) {
+            const auto& card = *find_card(id);
+            try {
+                CHECK(is_deck_card(id) && official(card.official_id) == id && printed_card(id) == id);
+                Deck deck{};
+                deck[0] = id;
+                auto others = std::views::filter(group, [id](CardId entry) { return entry != id; });
+                std::copy_n(others.begin(), kDeckSize - 1, deck.begin() + 1);
+                const auto fresh = new_game(deck, deck, card.official_id);
+                CHECK(fresh.players[0].deck_end == kDeckSize && fresh.players[0].hand_count == 4);
+                const auto& side = fresh.players[0];
+                if (card.faith) CHECK(std::find(side.faiths.begin(), side.faiths.begin() + side.faith_count, card.faith) !=
+                                      side.faiths.begin() + side.faith_count);
+
+                Scenario s;
+                s.place(kWingedStatue);
+                s.place(kTrainer);
+                s.place(kTrainer, 1);
+                s.hand({id, kRapid, kPropagation, kEvidence});
+                s.player().leader_hp = 10;
+                const auto moves = legal_actions(s.state);
+                const auto action = std::find_if(moves.begin(), moves.end(), [](Action move) {
+                    return move.type == Play && move.src == 0;
+                });
+                CHECK(action != moves.end());
+                s.run(*action);
+                CHECK(s.state.outcome == Outcome::Ongoing && s.player().plays_this_turn > 0);
+                CHECK(s.player().hand_count <= kHandLimit && s.player().board_count <= kBoardLimit);
+                if (card.kind != Kind::Spell) {
+                    CHECK(std::any_of(s.player().board.begin(), s.player().board.begin() + s.player().board_count,
+                                      [id](const auto& object) { return object.card_id == id; }));
+                } else {
+                    CHECK(s.player().shadows > 0);
+                }
+                std::cout << "PASS elf_royal_card " << card.official_id << '\n';
+            } catch (const std::exception& error) {
+                throw std::runtime_error(std::to_string(card.official_id) + " " + std::string(card.name) + ": " + error.what());
+            }
+        }
+    }
+}
+
+void elf_royal_faith() {
+    const auto sas = official(10614120);
+    const auto idmeta = official(10624120);
+    const auto sas_faith = official(10614122);
+    const auto id_faith = official(10624122);
+    auto deck = kMirrorDeck;
+    deck[0] = deck[1] = sas;
+    deck[2] = idmeta;
+    const auto fresh = new_game(deck, deck, 13);
+    for (const auto& side : fresh.players) {
+        CHECK(side.faith_count == 2 && side.faiths[0] == sas_faith && side.faiths[1] == id_faith &&
+              side.crest_count == 0 && side.faith_values[0] == 0 && side.faith_values[1] == 0 && side.deck_end == 40);
+    }
+    CHECK(!is_deck_card(sas_faith) && !is_deck_card(id_faith));
+    Scenario s;
+    auto& p = s.player();
+    p.faiths[0] = sas_faith;
+    p.faiths[1] = id_faith;
+    p.faith_count = 2;
+    p.faith_values[0] = 8;
+    p.faith_values[1] = 4;
+    s.hand({sas, sas, idmeta, official(10522310), official(10621110), official(10612310)});
+    s.run({Play, 0});
+    CHECK(p.faith_values[0] == 8 && p.faith_upgrades[0] == 0 && p.hand_count == 5);
+    s.run({Evolve, 0});
+    CHECK(p.faith_values[0] == 9 && p.hand_modifiers[p.hand_count - 1].cost == -1);
+    constexpr Effect make_evolved{.operation=Operation::SummonEvolved, .amount=1, .card=kTrainer};
+    resolve_effect_steps(s.state, 0, std::array{make_evolved});
+    CHECK(p.faith_values[0] == 10 && p.hand_modifiers[p.hand_count - 1].cost == -2);
+    s.run({Play, 0});
+    CHECK(p.faith_values[0] == 0 && p.faith_upgrades[0] == 1 && p.hand[p.hand_count - 1] == official(90014330));
+    s.run({Play, static_cast<std::int8_t>(p.hand_count - 1), kOwnBoardTarget + 2});
+    CHECK(p.faith_values[0] == 1 && s.player(1).leader_hp == 19 &&
+          p.board[2].evolution == Evolution::Normal && p.hand_modifiers[p.hand_count - 1].cost == -3);
+    s.next_own_turn();
+    s.run({Play, 0});
+    CHECK(p.hand[p.hand_count - 1] == official(90024320));
+    s.run({Play, 1});
+    CHECK(p.faith_values[1] == 5);
+    s.run({Evolve, 3});
+    CHECK(p.faith_values[1] == 0 && p.faith_upgrades[1] == 1);
+    const int before = p.board[0].atk;
+    s.hand({official(10522310)});
+    p.pp = 4;
+    s.run({Play, 0});
+    CHECK(p.faith_values[1] == 1 && p.board[0].atk == before + 1);
+}
+
+void elf_royal_combos_and_modes() {
+    Scenario combo;
+    combo.hand({official(10011120), official(10912310), official(10714110), official(10712120)});
+    combo.place(kCorrector, 1);
+    combo.run({Play, 0});
+    CHECK(combo.player().plays_this_turn == 2);
+    combo.reject({Play, 0, kNoTarget, 1});
+    combo.run({Play, 0, kNoTarget, kAllModes});
+    CHECK(combo.player().hand[2] == official(90011310) && combo.player().hand[3] == official(90011110) &&
+          combo.player(1).board[0].hp == 1);
+    combo.run({Play, 0, 0});
+    CHECK(combo.player().plays_this_turn == 5 && combo.player(1).board_count == 0);
+    combo.player().pp = 5;
+    combo.run({Play, 0});
+    CHECK(combo.player().plays_this_turn == 7);
+    combo.run({Evolve, 2});
+    CHECK(combo.player().plays_this_turn == 8);
+
+    Scenario damage;
+    damage.hand({official(10511310), official(10914110)});
+    damage.place(kLilium, 1);
+    damage.place(kWingedStatue, 1);
+    damage.place(kCorrector, 1);
+    damage.run({Play, 0});
+    CHECK(damage.player(1).board_count == 2 && damage.player(1).board[1].hp == 3);
+    damage.player().plays_this_turn = 2;
+    damage.run({Play, 0});
+    CHECK(damage.player(1).board_count == 1 && damage.player(1).board[0].card_id == kWingedStatue);
+
+    Scenario mode;
+    mode.hand({official(10514120), official(10623310), official(10823310)});
+    mode.place(kCorrector, 1);
+    mode.run({Play, 0, kNoTarget, 2});
+    CHECK(mode.player().pp == 9);
+    mode.run({Evolve, 0, kNoTarget, 3});
+    CHECK(mode.player(1).board[0].hp == 2);
+    mode.run({Play, 0, kNoTarget, kAllModes});
+    CHECK(mode.player().pp == 6 && mode.player(1).board_count == 0);
+    mode.place(kTrainer);
+    mode.player().leader_hp = 14;
+    mode.run({Play, 0, kNoTarget, kAllModes});
+    CHECK(mode.player().leader_hp == 16);
+
+    for (const int pp : {6, 7, 8, 10}) {
+        Scenario noel;
+        auto& p = noel.player();
+        p.pp = static_cast<std::uint8_t>(pp);
+        noel.hand({official(10624110)});
+        noel.run({Play, 0});
+        CHECK(p.board_count == (pp >= 8 ? 4 : pp >= 7 ? 3 : 2) && (p.board[1].abilities & kBane));
+        if (pp >= 7) CHECK(p.board[2].abilities & kDrain);
+        if (pp >= 8) CHECK(p.board[3].abilities & FLAG_STORM);
+        CHECK(p.pp == (pp == 10 ? 2 : 0));
+    }
+
+    Scenario rally;
+    auto& p = rally.player();
+    p.followers_entered = 19;
+    rally.hand({official(10724110), official(10722310)});
+    rally.run({Play, 0});
+    CHECK(p.crest_count == 1 && p.crests[0].id == CrestId::Gildaria && p.board[0].evolution == Evolution::Normal);
+    CHECK(p.followers_entered == 22 && p.board_count == 3 &&
+          (p.board[1].abilities & FLAG_RUSH) && rally.player(1).leader_hp == 18);
+    rally.run({Play, 0});
+    CHECK(p.hand_count == 2 && p.hand[0] == official(90021120) &&
+          (p.hand_modifiers[0].abilities & FLAG_RUSH) && p.hand[1] == p.hand[0]);
+}
+
+void elf_royal_hand_and_copies() {
+    Scenario evidence;
+    const auto seller = official(11021110);
+    const auto designer = official(11022110);
+    const auto collector = official(11023110);
+    auto& p = evidence.player();
+    evidence.place(kEvidence).clue_count = 2;
+    evidence.place(kEvidence, 1);
+    evidence.hand({seller, designer, collector, official(11022310)});
+    evidence.place(kCorrector, 1);
+    evidence.run({Act, 0});
+    CHECK(p.acted_evidence && p.hand_modifiers[0].attack == 0 && p.hand_modifiers[0].defense == 1 &&
+          p.hand_modifiers[1].attack == 4 && p.hand_modifiers[1].defense == -3 &&
+          p.hand_modifiers[2].attack == -3 && p.hand_modifiers[2].defense == 4);
+    evidence.run({Play, 0});
+    CHECK(p.board[1].card_id == seller && p.board[2].card_id == seller &&
+          p.board[1].atk == 2 && p.board[1].hp == 2 && p.board[2].hp == 2);
+    evidence.run({Play, 2, 1});
+    CHECK(evidence.player(1).board_count == 1 && evidence.player(1).board[0].card_id == kEvidence);
+    evidence.next_own_turn();
+    CHECK(!p.acted_evidence);
+
+    Scenario costs;
+    costs.hand({official(10913310), official(10721110)});
+    auto& side = costs.player();
+    side.plays_this_turn = 3;
+    const auto next_cost = official(10522110);
+    side.deck[side.deck_idx] = next_cost;
+    costs.place(kTrainer);
+    costs.run({SuperEvolve, 0});
+    CHECK(card_cost(*find_card(side.hand[1]), side.hand_modifiers[1]) == 1);
+    costs.next_own_turn();
+    CHECK(side.hand_modifiers[0].cost == -1 && side.hand[2] == next_cost &&
+          card_cost(*find_card(next_cost), side.hand_modifiers[2]) == 3);
+    costs.next_own_turn();
+    CHECK(card_cost(*find_card(next_cost), side.hand_modifiers[2]) == 6);
+
+    Scenario copies;
+    const auto low = official(10514110);
+    const auto spa = official(10912120);
+    copies.hand({low, kEvidence, kTrainer});
+    copies.player().plays_this_turn = 2;
+    copies.run({Play, 0});
+    CHECK(copies.player().board[0].atk == 4 && copies.player().board[0].hp == 4);
+    auto& other = copies.player(1);
+    copies.hand({kColette}, 1);
+    other.hand_modifiers[0].cost = -1;
+    other.deck_end = other.deck_idx + 3;
+    for (int i = other.deck_idx; i < other.deck_end; ++i) {
+        other.deck[i] = spa;
+        other.deck_modifiers[i].attack = 2;
+    }
+    copies.run({Evolve, 0});
+    CHECK(copies.player().hand_count == 3 && copies.player().shadows == 2 && other.deck_remaining() == 3);
+    CHECK(copies.player().hand[0] == spa && copies.player().hand_modifiers[0].attack == 2);
+    copies.run({Play, 0});
+    CHECK(copies.player().hand[2] == kColette && copies.player().hand_modifiers[2].cost == -1 &&
+          other.hand_count == 1 && other.deck_remaining() == 3);
+
+    Scenario mind;
+    const auto shift = official(10711310);
+    mind.hand({kTrainer, shift, kExias});
+    mind.reject({Play, 1, kNoTarget, 0, 0b001, true});
+    mind.run({Play, 1, kNoTarget, 0, 0b101, true});
+    CHECK(mind.player().hand_count == 2 && mind.player().shadows == 1);
+    mind.hand({shift, kTrainer});
+    const auto moves = legal_actions(mind.state);
+    CHECK(std::none_of(moves.begin(), moves.end(),
+                       [](Action action) { return action.type == Play && action.src == 0; }));
+}
+
+void elf_royal_crests() {
+    using enum CrestId;
+    for (const auto [id, official_id, cd] : std::array<std::tuple<CrestId, std::uint32_t, int>, 9>{{
+             {Shrink, 10712312, 1}, {Expand, 10713312, 1}, {Dustdays, 10714112, 3}, {DeerKing, 10714122, 3},
+             {Beasts, 11012312, 2}, {Unkei, 10524122, 4}, {March, 10622312, 2},
+             {Gildaria, 10724112, 1}, {Almerize, 11024122, 2}}}) {
+        const auto* crest = find_crest(id);
+        CHECK(crest && crest->official_id == official_id && crest->countdown == cd && !crest->name.empty());
+    }
+    Scenario elf;
+    elf.hand({official(10712310), official(10713310), official(11012310)});
+    elf.player().plays_this_turn = 2;
+    elf.place(official(10714110));
+    elf.place(official(10714120));
+    elf.run({Play, 0});
+    elf.run({Play, 0});
+    elf.run({Play, 0});
+    elf.run({Evolve, 0});
+    CHECK(elf.player().crest_count == 4 && elf.player().crests[3].id == Dustdays);
+    elf.next_own_turn();
+    CHECK(elf.player().crest_count == 2 && elf.player().board[3].card_id == official(11012110));
+    CHECK(elf.player().hand[0] == official(10713310) && elf.player().hand[1] == official(10712310));
+    elf.run({SuperEvolve, 1});
+    CHECK(elf.player().crests[2].id == DeerKing);
+    elf.player().plays_this_turn = 3;
+    elf.run({EndTurn});
+    CHECK(elf.player().hand[elf.player().hand_count - 1] == official(90011310));
+    CHECK(elf.player().deck_modifiers[elf.player().deck_idx].attack == 2);
+
+    Scenario royal;
+    royal.place(official(11024120));
+    royal.place(official(10524120));
+    royal.run({SuperEvolve, 0});
+    CHECK(royal.player().crests[0].id == Almerize && royal.player().crests[0].countdown == 4);
+    royal.next_own_turn();
+    CHECK(royal.player().hand[0] == official(90021310) && royal.player().hand_modifiers[0].cost == -1);
+    royal.run({SuperEvolve, 1});
+    CHECK(royal.player().crests[1].id == Unkei);
+    royal.next_own_turn();
+    CHECK(royal.player().hand[2] == official(90021320) && royal.player().hand_modifiers[2].cost == -1 &&
+          royal.player().hand[3] == official(90021350));
+    royal.next_own_turn();
+    CHECK(royal.player().hand[5] == official(90021310));
+
+    Scenario march;
+    march.hand({official(10622310), official(10621110)});
+    march.player().pp = 3;
+    march.run({Play, 0});
+    CHECK(march.player().crests[0].id == March && march.player().crests[0].countdown == 4);
+    march.next_own_turn();
+    const int before = march.player().board_count;
+    march.run({Play, 0});
+    CHECK(march.player().board_count == before + 2 && march.player().board[march.player().board_count - 1].card_id == official(10621110));
+}
+
+void elf_royal_tokens() {
+    constexpr std::array<std::uint32_t, 17> tokens{90011110,90011120,90011310,90014110,90014330,
+        90021110,90021120,90021130,90021210,90021310,90021320,90021330,90021340,90021350,90022110,90024320,90024330};
+    for (const auto id : tokens) {
+        const auto internal = official(id);
+        const auto& token = *find_card(internal);
+        CHECK(!is_deck_card(internal) && !token.class_name.empty());
+        Scenario s;
+        s.hand({internal});
+        s.place(kTrainer);
+        s.place(kCorrector, 1);
+        s.player().leader_hp = 12;
+        const auto choices = legal_actions(s.state);
+        const auto move = std::find_if(choices.begin(), choices.end(), [](Action a) { return a.type == Play; });
+        CHECK(move != choices.end());
+        s.run(*move);
+        CHECK(s.state.outcome == Outcome::Ongoing);
+        if (token.kind != Kind::Spell) CHECK(s.player().board[1].card_id == internal);
+        else CHECK(s.player().shadows == 1);
+    }
+    Scenario flag;
+    flag.place(official(90021210)).countdown = 1;
+    flag.hand({official(90021310), official(90021320)});
+    flag.run({Play, 0, kEnemyLeader});
+    CHECK(flag.player(1).leader_hp == 17 && flag.player().board_count == 0 && flag.player().shadows == 2);
+    flag.place(official(90011120));
+    flag.run({EndTurn});
+    CHECK(flag.player().board[0].evolution == Evolution::Normal);
+}
+
+int elf_royal_units() {
+    try {
+        elf_royal_card_cases();
+        elf_royal_faith();
+        elf_royal_combos_and_modes();
+        elf_royal_hand_and_copies();
+        elf_royal_crests();
+        elf_royal_tokens();
+        std::cout << "PASS elf_royal card cases=123 token cases=17 crests=9 faiths=2\n";
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+}
+
 void validate_rotation(const GameState& state) {
     CHECK(state.turn_player < 2 && state.turn_number >= 1 && state.turn_number <= kTurnLimit);
     std::array<EntityId, 4 * kBoardLimit> orders{};
@@ -1613,6 +1946,10 @@ void validate_rotation(const GameState& state) {
             clues += pc.clue_count > 0;
         }
         CHECK(clues <= 1);
+        for (int i = 0; i < player.faith_count; ++i) {
+            CHECK(find_card(player.faiths[i])->kind == Kind::Faith);
+            CHECK(std::find(player.faiths.begin(), player.faiths.begin() + i, player.faiths[i]) == player.faiths.begin() + i);
+        }
         for (int i = 0; i < player.crest_count; ++i) {
             const auto& crest = player.crests[i];
             record(crest.creation_order);
@@ -1633,11 +1970,8 @@ void validate_rotation(const GameState& state) {
     }
 }
 
-int stress_rotation() {
-    constexpr int games = 10'000;
-    constexpr std::uint64_t seed = 0x535657425742ULL;
+int stress_rotation(std::span<const CardId> rotation, int games, std::uint64_t seed, std::string_view label) {
     std::mt19937_64 rng(seed);
-    const auto rotation = neutral_bishop_rotation();
     std::vector<CardId> pool;
     for (int copy = 0; copy < 3; ++copy) pool.insert(pool.end(), rotation.begin(), rotation.end());
     std::vector<CardId> played;
@@ -1680,11 +2014,20 @@ int stress_rotation() {
         return std::find(played.begin(), played.end(), id) != played.end();
     }));
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-    std::cout << "PASS rotation_mirror games=" << games << " seed=" << seed << " cards_played=" << rotation.size()
+    std::cout << "PASS " << label << " games=" << games << " seed=" << seed << " cards_played=" << rotation.size()
               << " actions=" << total_actions << " max_actions=" << max_actions << " invariant_failures=0\n"
               << std::fixed << std::setprecision(3) << "elapsed_seconds=" << secs
               << " games_per_second=" << games / secs << " (single thread, all states checked)\n";
     return 0;
+}
+
+int stress_with_neutral(std::span<const CardId> faction, std::uint64_t seed, std::string_view label) {
+    std::vector<CardId> pool(faction.begin(), faction.end());
+    for (const auto id : neutral_bishop_rotation()) {
+        if (find_card(id)->class_name == "ニュートラル") pool.push_back(id);
+    }
+    CHECK(pool.size() == faction.size() + 41);
+    return stress_rotation(pool, 5'000, seed, label);
 }
 
 } // namespace
@@ -1698,7 +2041,13 @@ int main(int argc, char** argv) {
         return stress();
     }
     if (argc == 2 && std::string_view(argv[1]) == "--rotation-unit") return rotation_units();
-    if (argc == 2 && std::string_view(argv[1]) == "--rotation-stress") return stress_rotation();
-    std::cerr << "Usage: test_wb [--stress|--rotation-unit|--rotation-stress]\n";
+    if (argc == 2 && std::string_view(argv[1]) == "--rotation-stress")
+        return stress_rotation(neutral_bishop_rotation(), 10'000, 0x535657425742ULL, "rotation_mirror");
+    if (argc == 2 && std::string_view(argv[1]) == "--elf-royal-unit") return elf_royal_units();
+    if (argc == 2 && std::string_view(argv[1]) == "--elf-stress")
+        return stress_with_neutral(elf_rotation(), 0x454c46ULL, "elf_neutral_mirror");
+    if (argc == 2 && std::string_view(argv[1]) == "--royal-stress")
+        return stress_with_neutral(royal_rotation(), 0x524f59414cULL, "royal_neutral_mirror");
+    std::cerr << "Usage: test_wb [--stress|--rotation-unit|--rotation-stress|--elf-royal-unit|--elf-stress|--royal-stress]\n";
     return 2;
 }

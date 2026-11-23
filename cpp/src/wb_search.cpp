@@ -357,10 +357,14 @@ MatchupFeatures::MatchupFeatures(const Deck& first, const Deck& second) {
     const auto collect = [&](std::span<const Effect> effects) {
         for (const auto& effect : effects) {
             add(effect.card);
+            add(effect.alternate_card);
             if (effect.operation == Operation::AddEarth) add(kEarthSigil);
             if (effect.operation == Operation::GrantCrest) {
                 if (const auto* crest = find_crest(effect.crest)) {
-                    for (const auto& step : crest->effects) add(step.card);
+                    for (const auto& step : crest->effects) {
+                        add(step.card);
+                        add(step.alternate_card);
+                    }
                     if (effect.crest == CrestId::Kukishiro) add(kHolyFalcon);
                 }
             }
@@ -371,6 +375,10 @@ MatchupFeatures::MatchupFeatures(const Deck& first, const Deck& second) {
         if (!card || !card->implemented) throw std::invalid_argument("Invalid card in matchup");
         add(card->crystal_form);
         add(card->accelerate_form);
+        add(card->faith);
+        for (const auto related : card->related) {
+            if (const auto* def = find_card(related); def && def->implemented) add(related);
+        }
         collect(card->effects);
     }
     std::sort(cards_.begin(), cards_.end(), [](CardId a, CardId b) {
@@ -393,7 +401,19 @@ Features extract_features(const GameState& state, const MatchupFeatures* matchup
     encode_player(features.data(), state, state.turn_player, matchup);
     encode_player(features.data() + kPlayerFeatures, state, 1 - state.turn_player, matchup);
     features[240] = state.turn_number / 40.0F;
-    if (matchup && !matchup->legacy_mirror()) features[241] = 1.0F;
+    if (matchup && !matchup->legacy_mirror()) {
+        features[241] = 1.0F;
+        for (int offset = 0; offset < kPlayers; ++offset) {
+            const auto& player = state.players[(state.turn_player + offset) % kPlayers];
+            auto* row = features.data() + 242 + offset * 7;
+            for (int i = 0; i < std::min(2, static_cast<int>(player.faith_count)); ++i) {
+                row[3 * i] = local_feature(player.faiths[i], *matchup);
+                row[3 * i + 1] = std::min(20, static_cast<int>(player.faith_values[i])) / 20.0F;
+                row[3 * i + 2] = std::min(5, static_cast<int>(player.faith_upgrades[i])) / 5.0F;
+            }
+            row[6] = static_cast<float>(player.acted_evidence);
+        }
+    }
     return features;
 }
 
