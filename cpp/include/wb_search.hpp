@@ -1,5 +1,6 @@
 #pragma once
 
+#include "attention.hpp"
 #include "search.hpp"
 #include "wb_cards.hpp"
 
@@ -20,9 +21,20 @@ private:
 };
 
 [[nodiscard]] Features extract_features(const GameState& state, const MatchupFeatures* matchup = nullptr);
+[[nodiscard]] attn::Tokens extract_attention_tokens(const GameState& state);
+[[nodiscard]] attn::CandidateFeatures extract_candidate_features(const GameState& initial, const GameState& decision,
+                                                                 const GameState& next);
 [[nodiscard]] inline const char* feature_schema(const MatchupFeatures& matchup) {
     return matchup.legacy_mirror() ? "wb-mirror-v2" : "wb-matchup-v2";
 }
+[[nodiscard]] inline const char* attention_feature_schema() {
+    return "wb-attention-v1";
+}
+
+struct AttentionPolicySample {
+    attn::CandidateFeatures features;
+    float probability;
+};
 
 struct RankedTurn {
     std::vector<Action> actions;
@@ -34,6 +46,7 @@ struct RankedTurn {
 struct Decision {
     GameState next;
     std::vector<PolicySample> policy;
+    std::vector<AttentionPolicySample> attention_policy;
     int visits = 0;
     bool forced = false;
     std::vector<RankedTurn> ranked;
@@ -46,6 +59,8 @@ class Search {
 public:
     Search(const Mlp& first, const Mlp& second, std::mt19937& rng, SearchOptions options,
            const MatchupFeatures* matchup = nullptr);
+    Search(const attn::AttentionModel& first, const attn::AttentionModel& second, std::mt19937& rng,
+           SearchOptions options, const MatchupFeatures* matchup = nullptr);
     ~Search();
     // Research plans and candidate values describe the sampled position.
     [[nodiscard]] Decision choose(const GameState& state, bool policy);
@@ -59,7 +74,8 @@ private:
     void expand(Node& node, std::size_t width, bool trace);
     [[nodiscard]] std::array<float, kPlayers> simulate(Node& node, const float* root_priors = nullptr);
 
-    std::array<const Mlp*, kPlayers> models_;
+    std::array<const Mlp*, kPlayers> models_{};
+    std::array<const attn::AttentionModel*, kPlayers> attention_models_{};
     std::mt19937& rng_;
     SearchOptions options_;
     const MatchupFeatures* matchup_;
@@ -68,6 +84,8 @@ private:
 
 // Evaluate each mask over common sampled replacement decks, without inspecting the actual next cards.
 [[nodiscard]] Action choose_mulligan(const GameState& state, const Mlp& model, std::mt19937& rng,
+                                     const MatchupFeatures* matchup = nullptr);
+[[nodiscard]] Action choose_mulligan(const GameState& state, const attn::AttentionModel& model, std::mt19937& rng,
                                      const MatchupFeatures* matchup = nullptr);
 [[nodiscard]] float outcome_value(Outcome outcome, int seat);
 

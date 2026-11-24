@@ -8,9 +8,9 @@ set_target_properties(svwb_engine PROPERTIES CXX_EXTENSIONS OFF)
 
 function(svwb_enable_warnings target)
     if(MSVC)
-        target_compile_options(${target} PRIVATE /W4 /permissive-)
+        target_compile_options(${target} PRIVATE /W4 /permissive- /arch:AVX2)
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -mavx2 -mfma)
     endif()
 endfunction()
 
@@ -21,7 +21,7 @@ svwb_enable_warnings(svwb_engine)
 
 find_package(Threads REQUIRED)
 find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
-add_library(svwb_search STATIC cpp/src/mlp.cpp cpp/src/search.cpp cpp/src/analysis.cpp)
+add_library(svwb_search STATIC cpp/src/mlp.cpp cpp/src/attention.cpp cpp/src/search.cpp cpp/src/analysis.cpp)
 target_link_libraries(svwb_search PUBLIC svwb_engine)
 set_target_properties(svwb_search PROPERTIES CXX_EXTENSIONS OFF)
 svwb_enable_warnings(svwb_search)
@@ -108,6 +108,7 @@ if(BUILD_TESTING)
     add_test(NAME wb_search_canonicalization COMMAND test_wb --canonicalization)
     add_test(NAME wb_search_forced_lethal COMMAND test_wb --forced-lethal)
     add_test(NAME wb_search_determinization COMMAND test_wb --determinization)
+    add_test(NAME wb_attention_info_leak_audit COMMAND test_wb --attention-audit)
     set_tests_properties(wb_mirror_random_10000 wb_rotation_mirror_random_10000
         wb_elf_neutral_random_5000 wb_royal_neutral_random_5000
         wb_dragon_neutral_random_5000 wb_nightmare_neutral_random_5000
@@ -133,5 +134,9 @@ if(BUILD_TESTING)
             "${CMAKE_CURRENT_SOURCE_DIR}/cpp/tests/check_deck_import.py"
             --stress-cli "$<TARGET_FILE:test_wb>" --play-cli "$<TARGET_FILE:svwb_play_cli>" --match-cli "$<TARGET_FILE:svwb_ai>")
         set_tests_properties(wb_deck_portal_import PROPERTIES TIMEOUT 60)
+        add_test(NAME wb_attention_pytorch_parity COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cpp/tests/check_attention.py"
+            --test-wb "$<TARGET_FILE:test_wb>" --match-cli "$<TARGET_FILE:svwb_ai>" --play-cli "$<TARGET_FILE:svwb_play_cli>")
+        set_tests_properties(wb_attention_pytorch_parity PROPERTIES TIMEOUT 60)
     endif()
 endif()

@@ -48,6 +48,7 @@ struct Options {
     bool evaluate = false;
     bool random_opponent = false;
     bool opponent_perfect_information = false;
+    attn::ModelType model_type = attn::ModelType::Mlp;
     SearchOptions search;
 };
 
@@ -59,7 +60,7 @@ void usage(std::ostream& out) {
            "               [--simulations N] [--no-exploration] [--log-dir DIR]\n"
            "               [--evaluate [--random-opponent]]\n"
            "               [--perfect-information | --opponent-perfect-information] (WB)\n"
-           "               [--rules legacy|wb]\n"
+           "               [--rules legacy|wb] [--model-type mlp|attention]\n"
            "               [--analysis-dir DIR [--trace-game N] [--trace-top N]]\n"
            "Evaluation uses greedy selection and no search noise. --random-opponent\n"
            "samples uniformly from all legal actions, including end turn.\n"
@@ -98,6 +99,7 @@ std::filesystem::path utf8_path(std::string_view value) {
 Options parse_options(int argc, char** argv) {
     Options options;
     bool explicit_rules = false;
+    bool explicit_model_type = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view flag(argv[i]);
         if (flag == "--no-exploration") {
@@ -162,9 +164,24 @@ Options parse_options(int argc, char** argv) {
             }
             explicit_rules = true;
             options.wb_rules = value == "wb";
+        } else if (flag == "--model-type") {
+            if (value != "mlp" && value != "attention") {
+                throw std::invalid_argument("--model-type must be mlp or attention");
+            }
+            explicit_model_type = true;
+            options.model_type = value == "attention" ? attn::ModelType::Attention : attn::ModelType::Mlp;
         } else {
             throw std::invalid_argument("Unknown option " + std::string(flag));
         }
+    }
+    if (!explicit_model_type && !options.weights.empty() && attn::is_attention_weights_file(options.weights)) {
+        options.model_type = attn::ModelType::Attention;
+    }
+    if (options.model_type == attn::ModelType::Attention) {
+        if (explicit_rules && !options.wb_rules) {
+            throw std::invalid_argument("--model-type attention requires WB rules");
+        }
+        options.wb_rules = true;
     }
     if (!options.deck_a_file.empty() || !options.deck_b_file.empty()) {
         if (explicit_rules && !options.wb_rules) throw std::invalid_argument("Deck JSON requires WB rules");
@@ -443,7 +460,7 @@ int run_application(int argc, char** argv) {
                 options.evaluate, options.random_opponent, options.search,
                 options.deck_a_file.empty() ? svwb::wb::kMirrorDeck : svwb::wb::read_deck(options.deck_a_file),
                 options.deck_b_file.empty() ? svwb::wb::kMirrorDeck : svwb::wb::read_deck(options.deck_b_file),
-                options.snapshot, options.opponent_perfect_information});
+                options.snapshot, options.opponent_perfect_information, options.model_type});
         } else {
             run(options);
         }

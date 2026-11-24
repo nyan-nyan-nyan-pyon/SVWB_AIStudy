@@ -6,26 +6,45 @@ import csv
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import random
 import shutil
+import sys
 import tempfile
 import time
+
+_ROOT_DIR = Path(__file__).resolve().parents[1]
+_DEPS = _ROOT_DIR / "build/phase3-deps"
+if _DEPS.is_dir() and str(_DEPS) not in sys.path:
+    sys.path.append(str(_DEPS))
+_MPL_DIR = _ROOT_DIR / "build/phase3-matplotlib"
+if _MPL_DIR.is_dir():
+    os.environ.setdefault("MPLCONFIGDIR", str(_MPL_DIR))
 
 import torch
 
 from plot_metrics import plot_metrics
 from match_runner import invoke, seat_win_rates, win_counters
 from run_storage import publish_checkpoint, replace_file
-from train import WEIGHT_BYTES, generation_dir, initialize_checkpoint, pick_device, train_generation
+from train import (
+    ATTN_WEIGHT_BYTES, WEIGHT_BYTES, generation_dir,
+    initialize_attention_checkpoint, initialize_checkpoint, pick_device, train_generation,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
 LOG_FILES = ("val_log.bin", "pol_log.bin")
 
 
+def weights_name(args):
+    return "attn_weights.bin" if getattr(args, "model_type", "mlp") == "attention" else "weights.bin"
+
+
 def wb_decks(args):
     flags = ["--rules", "wb"]
+    if getattr(args, "model_type", "mlp") == "attention":
+        flags.extend(("--model-type", "attention"))
     if args.perfect_information:
         flags.append("--perfect-information")
     for flag, deck in (("--deck-a", args.deck_a), ("--deck-b", args.deck_b)):
@@ -96,6 +115,8 @@ def config_for(args):
     keys = ("games", "seconds", "threads", "simulations", "eval_games", "epochs", "batch_size",
             "replay_window", "seed", "minimum_convergence", "device", "rules", "snapshot_ratio")
     result = {key: getattr(args, key) for key in keys}
+    if getattr(args, "model_type", "mlp") == "attention":
+        result["model_type"] = "attention"
     if args.rules == "wb":
         result["wb_actor_version"] = 2
     for key in ("deck_a", "deck_b", "baseline_weights"):
@@ -129,9 +150,12 @@ def initialize_run(args, device):
     initial = generation_dir(output, 0)
     if not initial.exists():
         with tempfile.TemporaryDirectory(prefix=".initial-", dir=output, ignore_cleanup_errors=True) as staging:
-            initialize_checkpoint(Path(staging), args.seed)
+            if getattr(args, "model_type", "mlp") == "attention":
+                initialize_attention_checkpoint(Path(staging), args.seed)
+            else:
+                initialize_checkpoint(Path(staging), args.seed)
             publish_checkpoint(Path(staging), initial)
-    verify_checkpoint(initial, 0, args.rules)
+    verify_checkpoint(initial, 0, args.rules, getattr(args, "model_type", "mlp"))
     rows = []
     for directory in sorted(output.glob("generation_[0-9]*"), key=lambda path: int(path.name.split("_")[-1])):
         if directory == initial:
@@ -139,14 +163,14 @@ def initialize_run(args, device):
         row = json.loads((directory / "metrics.json").read_text(encoding="utf-8"))
         if row["generation"] != len(rows) + 1 or directory != generation_dir(output, row["generation"]):
             raise ValueError("Completed generation directories are not contiguous")
-        verify_checkpoint(directory, row["generation"], args.rules)
+        verify_checkpoint(directory, row["generation"], args.rules, getattr(args, "model_type", "mlp"))
         rows.append(row)
     print(f"Training device: {torch.cuda.get_device_name(device) if device.type == 'cuda' else 'CPU'}",
           flush=True)
     return rows
 
 
-def verify_checkpoint(directory, generation, rules):
+def verify_checkpoint(directory, generation, rules, model_type="mlp"):
     required = ["model.pt"]
     if generation:
         required.extend(LOG_FILES)
@@ -158,16 +182,22 @@ def verify_checkpoint(directory, generation, rules):
         path = directory / name
         if not path.is_file() or path.stat().st_size == 0:
             raise ValueError(f"Incomplete checkpoint: {path}")
-    weights = directory / "weights.bin"
-    if not weights.is_file() or weights.stat().st_size != WEIGHT_BYTES:
-        raise ValueError(f"Invalid checkpoint weights: {weights}")
+    if model_type == "attention":
+        for name in ("attn_weights.bin", "weights.bin"):
+            weights = directory / name
+            if not weights.is_file() or weights.stat().st_size != ATTN_WEIGHT_BYTES:
+                raise ValueError(f"Invalid attention checkpoint weights: {weights}")
+    else:
+        weights = directory / "weights.bin"
+        if not weights.is_file() or weights.stat().st_size != WEIGHT_BYTES:
+            raise ValueError(f"Invalid checkpoint weights: {weights}")
 
 
 def snapshot_opponent(args, generation, baseline):
     if not args.snapshot_ratio:
         return [], None
     older = random.Random((args.seed << 32) | generation).randrange(max(1, generation - 1))
-    weights = baseline if older == 0 else generation_dir(args.output_dir, older) / "weights.bin"
+    weights = baseline if older == 0 else generation_dir(args.output_dir, older) / weights_name(args)
     source = "baseline" if older == 0 and args.baseline_weights else weights.parent.name
     return ["--snapshot-weights", weights, "--snapshot-bps", round(args.snapshot_ratio * 10_000)], source
 
@@ -178,7 +208,8 @@ def run_generation(args, generation, rows, device):
     previous = generation_dir(output, generation - 1)
     target = generation_dir(output, generation)
     seed = (args.seed + generation) % 2**32
-    baseline = args.baseline_weights or generation_dir(output, 0) / "weights.bin"
+    w_file = weights_name(args)
+    baseline = args.baseline_weights or generation_dir(output, 0) / w_file
     snapshot_flags, snapshot_source = snapshot_opponent(args, generation, baseline)
     print(f"Generation {generation}: self-play", flush=True)
     with tempfile.TemporaryDirectory(prefix=".generation-", dir=output, ignore_cleanup_errors=True) as stage_name:
@@ -190,10 +221,11 @@ def run_generation(args, generation, rows, device):
             deck_args = wb_decks(args) if args.rules == "wb" else ["--deck-a", "A", "--deck-b", "B"]
             counters = invoke(args.exe, [
                 *limits, "--threads", args.threads, "--simulations", args.simulations, "--seed", seed,
-                *deck_args, "--weights", previous / "weights.bin", *snapshot_flags, "--log-dir", work,
+                *deck_args, "--weights", previous / w_file, *snapshot_flags, "--log-dir", work,
             ])
-            if args.rules == "wb" and counters.get("feature_schema") not in ("wb-mirror-v2", "wb-matchup-v2"):
-                raise RuntimeError("The WB executable must be rebuilt with P0 actor features")
+            valid_schemas = ("wb-attention-v1",) if getattr(args, "model_type", "mlp") == "attention" else ("wb-mirror-v2", "wb-matchup-v2")
+            if args.rules == "wb" and counters.get("feature_schema") not in valid_schemas:
+                raise RuntimeError("The WB executable returned an unexpected feature schema")
             for filename in LOG_FILES:
                 shutil.copyfile(work / filename, stage / filename)
             if (work / "matchup_features.json").is_file():
@@ -207,12 +239,12 @@ def run_generation(args, generation, rows, device):
         reference = (stage if generation == 1 else generation_dir(output, 1)) / "evaluation.npz"
         losses = train_generation(replay, previous / "model.pt", stage, reference, generation,
                                   device=device, epochs=args.epochs, batch_size=args.batch_size, seed=seed,
-                                  learning_rate=args.learning_rate)
+                                  learning_rate=args.learning_rate, model_type=getattr(args, "model_type", "mlp"))
         evaluating_at = time.perf_counter()
         print(f"Generation {generation}: evaluating", flush=True)
-        weights = stage / "weights.bin"
+        weights = stage / w_file
         random_stats = evaluate(args, weights)
-        previous_weights = previous / "weights.bin"
+        previous_weights = previous / w_file
         previous_stats = evaluate(args, weights, previous_weights)
         baseline_stats = previous_stats if baseline == previous_weights else evaluate(args, weights, baseline)
         evaluated_at = time.perf_counter()
@@ -274,11 +306,14 @@ def parse_args():
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--perfect-information", action="store_true",
                         help="Use the previous WB search that sees all cards")
+    parser.add_argument("--model-type", choices=("mlp", "attention"), default="mlp")
     args = parser.parse_args()
     custom_decks = args.deck_a is not None or args.deck_b is not None
     if custom_decks and args.rules == "legacy":
         parser.error("Deck JSON files require WB rules")
-    args.rules = args.rules or ("wb" if custom_decks else "legacy")
+    if args.model_type == "attention" and args.rules == "legacy":
+        parser.error("--model-type attention requires WB rules")
+    args.rules = args.rules or ("wb" if (custom_decks or args.model_type == "attention") else "legacy")
     if args.perfect_information and args.rules != "wb":
         parser.error("--perfect-information requires WB rules")
     if custom_decks and args.output_dir is None:

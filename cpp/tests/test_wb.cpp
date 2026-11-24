@@ -5,6 +5,7 @@
 #include <charconv>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <initializer_list>
 #include <iostream>
@@ -3314,10 +3315,232 @@ void determinization_audit() {
     std::cout << "PASS determinization: both seats, identical sampled states, plans, values, visits and policy targets; live replay verified\n";
 }
 
+void attention_audit() {
+    const auto sammy = official(10832110);
+    auto witch = kMirrorDeck;
+    witch[0] = sammy;
+    witch[1] = official(10031310);
+    const MatchupFeatures mirror(kMirrorDeck, kMirrorDeck);
+    const MatchupFeatures custom(witch, kMirrorDeck);
+    const auto model = svwb::attn::AttentionModel::random(202611);
+
+    for (const auto* matchup : {&mirror, &custom}) {
+        auto initial = new_game(matchup->legacy_mirror() ? kMirrorDeck : witch, kMirrorDeck, 4096);
+        apply_legal_action(initial, {Mulligan});
+        apply_legal_action(initial, {Mulligan});
+        // Advance several turns and populate board, crests, faiths, earth sigils, and hand modifiers.
+        for (int step = 0; step < 6 && initial.outcome == Outcome::Ongoing; ++step) {
+            apply_legal_action(initial, {EndTurn});
+        }
+        initial.players[0].crests[0] = {101, CrestId::Testimony, 2, 0, 0};
+        initial.players[0].crest_count = 1;
+        initial.players[1].crests[0] = {102, CrestId::Rituel, 3, 0, 0};
+        initial.players[1].crest_count = 1;
+        initial.players[0].faiths[0] = kFaithToken;
+        initial.players[0].faith_values[0] = 7;
+        initial.players[0].faith_upgrades[0] = 2;
+        initial.players[0].faith_count = 1;
+
+        for (int seat = 0; seat < svwb::kPlayers; ++seat) {
+            auto state = initial;
+            state.turn_player = static_cast<std::uint8_t>(seat);
+            state.players[seat].pp = state.players[seat].max_pp = 5;
+            state.players[seat].ep = 1;
+            state.players[seat].sep = 1;
+            if (state.players[seat].board_count == 0) {
+                state.players[seat].board[0] = {201, kLilium, 2, 1, 1, FLAG_RUSH, 0, 0, 1, Evolution::Normal};
+                state.players[seat].board_count = 1;
+            }
+            if (state.players[1 - seat].board_count == 0) {
+                state.players[1 - seat].board[0] = {202, kColette, 2, 4, 4, FLAG_WARD, 0, 0, 1, Evolution::None};
+                state.players[1 - seat].board_count = 1;
+            }
+
+            const auto tokens = extract_attention_tokens(state);
+            svwb::attn::RootContext ctx_state{};
+            const float val_state = model.evaluate_root(tokens, ctx_state);
+            const float logit_state = model.value_logit(tokens);
+
+            // Rewrite opponent's hand contents/modifiers and both players' deck orders/contents.
+            auto hidden = state;
+            auto& opposing = hidden.players[1 - seat];
+            std::fill_n(opposing.hand.begin(), opposing.hand_count, sammy);
+            opposing.hand_modifiers[0].spellboost = 11;
+            opposing.hand_modifiers[0].cost = -3;
+            opposing.hand_modifiers[1].attack = 4;
+            for (auto& player : hidden.players) {
+                std::reverse(player.deck.begin() + player.deck_idx, player.deck.begin() + player.deck_end);
+                std::reverse(player.deck_modifiers.begin() + player.deck_idx, player.deck_modifiers.begin() + player.deck_end);
+                player.deck[player.deck_idx] = sammy;
+                player.deck_modifiers[player.deck_idx].attack = 7;
+            }
+            hidden.rng_state ^= 0xDEADBEEFCAFEBABEULL;
+
+            const auto hidden_tokens = extract_attention_tokens(hidden);
+            CHECK(hidden_tokens == tokens);
+
+            svwb::attn::RootContext ctx_hidden{};
+            const float val_hidden = model.evaluate_root(hidden_tokens, ctx_hidden);
+            const float logit_hidden = model.value_logit(hidden_tokens);
+            CHECK(val_hidden == val_state && logit_hidden == logit_state);
+            CHECK(ctx_hidden.cls == ctx_state.cls && ctx_hidden.policy_base == ctx_state.policy_base);
+
+            // Verify public opponent hand size and own hand content changes ARE reflected.
+            auto diff_public = hidden;
+            --diff_public.players[1 - seat].hand_count;
+            CHECK(extract_attention_tokens(diff_public) != tokens);
+            auto diff_own_hand = state;
+            diff_own_hand.players[seat].hand[0] = diff_own_hand.players[seat].hand[0] == kLilium ? kTrainer : kLilium;
+            CHECK(extract_attention_tokens(diff_own_hand) != tokens);
+
+            // Verify full Attention Search (determinized MCTS + candidate features + policy targets) matches identically
+            // when opponent hand contents, opponent deck order/contents, and own deck order are rewritten.
+            auto search_hidden = state;
+            auto& altered_own = search_hidden.players[seat];
+            std::reverse(altered_own.deck.begin() + altered_own.deck_idx, altered_own.deck.begin() + altered_own.deck_end);
+            std::reverse(altered_own.deck_modifiers.begin() + altered_own.deck_idx,
+                         altered_own.deck_modifiers.begin() + altered_own.deck_end);
+            auto& altered_opp = search_hidden.players[1 - seat];
+            std::reverse(altered_opp.deck.begin() + altered_opp.deck_idx, altered_opp.deck.begin() + altered_opp.deck_end);
+            std::fill_n(altered_opp.hand.begin(), altered_opp.hand_count, sammy);
+            altered_opp.hand_modifiers[0].spellboost = 11;
+            altered_opp.hand_modifiers[0].cost = -3;
+            altered_opp.deck[altered_opp.deck_idx] = kEvidence;
+            search_hidden.rng_state ^= 0xDEADBEEFCAFEBABEULL;
+
+            std::mt19937 left_rng(314), right_rng(314);
+            Search left(model, model, left_rng, {8, true, true}, matchup);
+            Search right(model, model, right_rng, {8, true, true}, matchup);
+            const auto a = left.choose(state, true);
+            const auto b = right.choose(search_hidden, true);
+            CHECK(a.sampled_root && b.sampled_root && *a.sampled_root == *b.sampled_root);
+            CHECK(a.next == b.next && a.actions == b.actions && a.visits == b.visits && a.forced == b.forced);
+            CHECK(a.attention_policy.size() == b.attention_policy.size() && !a.attention_policy.empty());
+            for (std::size_t i = 0; i < a.attention_policy.size(); ++i) {
+                CHECK(a.attention_policy[i].features == b.attention_policy[i].features);
+                CHECK(a.attention_policy[i].probability == b.attention_policy[i].probability);
+                const float pol_a = model.policy_logit(ctx_state, a.attention_policy[i].features.data());
+                const float pol_b = model.policy_logit(ctx_hidden, b.attention_policy[i].features.data());
+                CHECK(pol_a == pol_b && std::isfinite(pol_a));
+            }
+            for (std::size_t i = 0; i < a.ranked.size(); ++i) {
+                const auto& candidate = a.ranked[i];
+                auto end_of_moves = *a.sampled_root;
+                for (const auto action : candidate.actions) {
+                    if (action.type == EndTurn) break;
+                    CHECK(apply_action(end_of_moves, action));
+                }
+                auto ended = end_of_moves;
+                if (ended.outcome == Outcome::Ongoing && ended.turn_player == a.sampled_root->turn_player) {
+                    CHECK(apply_action(ended, {EndTurn}));
+                }
+                const auto replayed_feat = extract_candidate_features(*a.sampled_root, end_of_moves, ended);
+                const float prob = static_cast<float>(candidate.visits) / a.visits;
+                CHECK(std::any_of(a.attention_policy.begin(), a.attention_policy.end(), [&](const auto& row) {
+                    return row.features == replayed_feat && row.probability == prob;
+                }));
+            }
+
+            // Verify token permutation invariance (no positional encoding).
+            auto permuted = tokens;
+            std::swap(permuted.vocab[0], permuted.vocab[1]);
+            for (int d = 0; d < svwb::attn::kAttrDim; ++d) {
+                std::swap(permuted.attrs[d], permuted.attrs[svwb::attn::kAttrDim + d]);
+            }
+            CHECK(std::abs(model.value_logit(permuted) - logit_state) < 1e-5F);
+        }
+    }
+    std::cout << "PASS attention info leak audit: hidden hand and deck order masked; tokens, logits, search and replay identical\n";
+}
+
+int dump_attention_parity(const std::filesystem::path& weights_path, const std::filesystem::path& out_path) {
+    const auto model = svwb::attn::AttentionModel::load(weights_path);
+    auto witch = kMirrorDeck;
+    witch[0] = official(10832110);
+    witch[1] = official(10031310);
+    witch[2] = official(10131320);
+    const MatchupFeatures matchup(witch, kMirrorDeck);
+
+    struct Record {
+        svwb::attn::Tokens tokens;
+        float value_logit;
+        float value_prob;
+        std::int32_t candidate_count;
+        std::array<svwb::attn::CandidateFeatures, svwb::kMaxCandidates> candidates;
+        std::array<float, svwb::kMaxCandidates> policy_logits;
+    };
+
+    std::vector<Record> records;
+    std::mt19937 rng(20261124);
+    for (int game_idx = 0; game_idx < 6 && records.size() < 32; ++game_idx) {
+        auto state = new_game(game_idx % 2 == 0 ? kMirrorDeck : witch, kMirrorDeck, 1000 + game_idx);
+        apply_legal_action(state, {Mulligan});
+        apply_legal_action(state, {Mulligan});
+        if (game_idx == 1) {
+            state.players[0].crests[0] = {500, CrestId::Testimony, 2, 0, 0};
+            state.players[0].crest_count = 1;
+            state.players[1].faiths[0] = kFaithToken;
+            state.players[1].faith_values[0] = 5;
+            state.players[1].faith_upgrades[0] = 1;
+            state.players[1].faith_count = 1;
+        }
+        Search search(model, model, rng, {8, false, true, true}, &matchup);
+        for (int turn = 0; turn < 14 && state.outcome == Outcome::Ongoing && records.size() < 32; ++turn) {
+            const auto decision = search.choose(state, true);
+            if (!decision.forced && !decision.attention_policy.empty()) {
+                const auto& root_state = decision.sampled_root ? *decision.sampled_root : state;
+                Record rec{};
+                rec.tokens = extract_attention_tokens(root_state);
+                svwb::attn::RootContext ctx{};
+                rec.value_prob = model.evaluate_root(rec.tokens, ctx);
+                rec.value_logit = model.value_logit(rec.tokens);
+                rec.candidate_count = static_cast<std::int32_t>(
+                    std::min<std::size_t>(decision.attention_policy.size(), svwb::kMaxCandidates));
+                for (int k = 0; k < rec.candidate_count; ++k) {
+                    rec.candidates[k] = decision.attention_policy[k].features;
+                    rec.policy_logits[k] = model.policy_logit(ctx, rec.candidates[k].data());
+                }
+                records.push_back(rec);
+            }
+            for (const auto action : decision.actions) {
+                if (!apply_action(state, action)) break;
+                if (state.outcome != Outcome::Ongoing) break;
+            }
+            if (state.outcome == Outcome::Ongoing && state.turn_player == (decision.sampled_root ? decision.sampled_root->turn_player : 0)) {
+                apply_legal_action(state, {EndTurn});
+            }
+        }
+    }
+    CHECK(records.size() >= 16);
+    std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
+    CHECK(static_cast<bool>(out));
+    const auto count = static_cast<std::int32_t>(records.size());
+    out.write(reinterpret_cast<const char*>(&count), sizeof(count));
+    for (const auto& rec : records) {
+        out.write(reinterpret_cast<const char*>(&rec.tokens), sizeof(rec.tokens));
+        out.write(reinterpret_cast<const char*>(&rec.value_logit), sizeof(rec.value_logit));
+        out.write(reinterpret_cast<const char*>(&rec.value_prob), sizeof(rec.value_prob));
+        out.write(reinterpret_cast<const char*>(&rec.candidate_count), sizeof(rec.candidate_count));
+        out.write(reinterpret_cast<const char*>(rec.candidates.data()), sizeof(rec.candidates));
+        out.write(reinterpret_cast<const char*>(rec.policy_logits.data()), sizeof(rec.policy_logits));
+    }
+    out.close();
+    std::cout << "Dumped " << records.size() << " attention parity positions\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     std::cout << "GameState_size_bytes=" << sizeof(GameState) << '\n';
+    if (argc == 4 && std::string_view(argv[1]) == "--attention-parity-dump") {
+        try {
+            return dump_attention_parity(argv[2], argv[3]);
+        } catch (const std::exception& error) {
+            std::cerr << error.what() << '\n';
+            return 1;
+        }
+    }
     if (argc == 5 && std::string_view(argv[1]) == "--deck-pair-stress") {
         try {
             return stress_deck_pair(argv[2], argv[3], argv[4]);
@@ -3357,6 +3580,7 @@ int main(int argc, char** argv) {
         const std::string_view mode(argv[1]);
         try {
             if (mode == "--actor-audit") actor_audit();
+            else if (mode == "--attention-audit") attention_audit();
             else if (mode == "--canonicalization") search_canonicalization();
             else if (mode == "--forced-lethal") search_forced_lethal();
             else if (mode == "--determinization") determinization_audit();

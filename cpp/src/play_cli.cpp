@@ -369,9 +369,10 @@ Object player_json(const GameState& state, int seat, bool show_hand, const Actio
     return result;
 }
 
+template<class Model>
 class Session {
 public:
-    Session(const Mlp& model, int simulations, std::optional<std::uint64_t> seed, bool determinization)
+    Session(const Model& model, int simulations, std::optional<std::uint64_t> seed, bool determinization)
         : model_(model), default_simulations_(simulations), default_seed_(seed), determinization_(determinization) {}
 
     Object handle(const Object& request) {
@@ -605,7 +606,7 @@ private:
                       {"legal_actions", std::move(actions)}, {"recent_actions", history_}, {"last_ai_turn", last_ai_turn_}};
     }
 
-    const Mlp& model_;
+    const Model& model_;
     int default_simulations_;
     std::optional<std::uint64_t> default_seed_;
     bool determinization_;
@@ -619,48 +620,9 @@ private:
     Json last_ai_turn_;
 };
 
-template<class Char>
-int run(int argc, Char** argv) {
-    std::filesystem::path weights;
-    int simulations = kDefaultSimulations;
-    bool determinization = true;
-    std::optional<std::uint64_t> seed;
-    for (int i = 1; i < argc; ++i) {
-        const std::filesystem::path option(argv[i]);
-        if (option == "--help") {
-            std::cout << "Usage: svwb_play_cli --weights FILE [--simulations 1..256] [--seed INTEGER] [--perfect-information]\n";
-            return 0;
-        }
-        if (option == "--perfect-information") {
-            determinization = false;
-            continue;
-        }
-        if (++i == argc) {
-            throw std::invalid_argument("Missing CLI option value");
-        }
-        const std::filesystem::path argument(argv[i]);
-        if (option == "--weights") {
-            weights = argument;
-        } else if (option == "--seed" || option == "--simulations") {
-            std::uint64_t n = 0;
-            if (!unsigned_integer(argument.string(), n) ||
-                (option == "--seed" ? n > kMaxSeed : n == 0 || n > kMaxSimulations)) {
-                throw std::invalid_argument("CLI numeric option out of range");
-            }
-            if (option == "--seed") {
-                seed = n;
-            } else {
-                simulations = static_cast<int>(n);
-            }
-        } else {
-            throw std::invalid_argument("Unknown CLI option");
-        }
-    }
-    if (weights.empty()) {
-        throw std::invalid_argument("--weights FILE is required");
-    }
-    const auto model = Mlp::load(weights);
-    Session session(model, simulations, seed, determinization);
+template<class Model>
+int serve_loop(const Model& model, int simulations, std::optional<std::uint64_t> seed, bool determinization) {
+    Session<Model> session(model, simulations, seed, determinization);
     std::cout.imbue(std::locale::classic());
     std::cout << std::setprecision(std::numeric_limits<double>::max_digits10);
     for (std::string line; std::getline(std::cin, line);) {
@@ -680,6 +642,63 @@ int run(int argc, Char** argv) {
         std::cout << '\n' << std::flush;
     }
     return std::cin.bad() ? 1 : 0;
+}
+
+template<class Char>
+int run(int argc, Char** argv) {
+    std::filesystem::path weights;
+    int simulations = kDefaultSimulations;
+    bool determinization = true;
+    std::optional<std::uint64_t> seed;
+    std::optional<attn::ModelType> model_type;
+    for (int i = 1; i < argc; ++i) {
+        const std::filesystem::path option(argv[i]);
+        if (option == "--help") {
+            std::cout << "Usage: svwb_play_cli --weights FILE [--model-type mlp|attention] [--simulations 1..256] [--seed INTEGER] [--perfect-information]\n";
+            return 0;
+        }
+        if (option == "--perfect-information") {
+            determinization = false;
+            continue;
+        }
+        if (++i == argc) {
+            throw std::invalid_argument("Missing CLI option value");
+        }
+        const std::filesystem::path argument(argv[i]);
+        if (option == "--weights") {
+            weights = argument;
+        } else if (option == "--model-type") {
+            const auto value = argument.string();
+            if (value != "mlp" && value != "attention") {
+                throw std::invalid_argument("--model-type must be mlp or attention");
+            }
+            model_type = value == "attention" ? attn::ModelType::Attention : attn::ModelType::Mlp;
+        } else if (option == "--seed" || option == "--simulations") {
+            std::uint64_t n = 0;
+            if (!unsigned_integer(argument.string(), n) ||
+                (option == "--seed" ? n > kMaxSeed : n == 0 || n > kMaxSimulations)) {
+                throw std::invalid_argument("CLI numeric option out of range");
+            }
+            if (option == "--seed") {
+                seed = n;
+            } else {
+                simulations = static_cast<int>(n);
+            }
+        } else {
+            throw std::invalid_argument("Unknown CLI option");
+        }
+    }
+    if (weights.empty()) {
+        throw std::invalid_argument("--weights FILE is required");
+    }
+    const auto resolved_type = model_type.value_or(
+        attn::is_attention_weights_file(weights) ? attn::ModelType::Attention : attn::ModelType::Mlp);
+    if (resolved_type == attn::ModelType::Attention) {
+        const auto model = attn::AttentionModel::load(weights);
+        return serve_loop(model, simulations, seed, determinization);
+    }
+    const auto model = Mlp::load(weights);
+    return serve_loop(model, simulations, seed, determinization);
 }
 
 } // namespace
