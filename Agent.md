@@ -17,7 +17,9 @@
   - `D:/dev/project/SVWB_AIStudy/build/phase5c-p0-release/Release/test_engine.exe`
   - `D:/dev/project/SVWB_AIStudy/build/phase5c-p0-release/Release/test_search.exe`
   - `D:/dev/project/SVWB_AIStudy/build/phase5c-p0-release/Release/test_wb.exe`
-- **呼び出し時の注意**: PowerShell 等から連続実行する際は、相対パスではなく上記の**正規化された絶対パス**で呼び出してください。また、リビルド直後やサブプロセス大量実行直後にセキュリティソフトのファイル走査が一時的にファイルをロックする場合があるため、万一 `Access is denied` が出た場合は数秒待ってから再実行してください。
+- **呼び出し時の注意**:
+  - PowerShell 等から連続実行する際は、相対パスではなく上記の**正規化された絶対パス**で呼び出してください。
+  - MSBuild で `.exe` が再リンクされた直後の**初回起動時のみ**、セキュリティソフトの初回バイナリスキャンで 15〜30 秒程度待たされることがあります。ビルド直後はタイムアウト付きの CTest を走らせる前に一度 `svwb_ai.exe --help` 等を単体実行して初回スキャンを完了させておくと安定します。
 
 ### 1.2 MSBuild は `--parallel` を付けずに単一プロセスツリーで実行する
 - **問題**: `cmake --build ... --parallel` を指定すると MSBuild が複数のワーカーノード子プロセス（`MSBuild.exe /nodemode:1`）を常駐生成し、サンドボックスやセキュリティ監視下でプロセス間通信がハング・失敗します。

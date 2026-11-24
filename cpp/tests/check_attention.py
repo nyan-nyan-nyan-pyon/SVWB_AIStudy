@@ -186,9 +186,21 @@ def main():
         # 3. Parity test with trained weights
         err_trained = check_parity_dump(args.test_wb.resolve(), trained_weights, root / "parity_trained.bin", "trained")
 
-        # 4. Header/CRC check and play_cli integration check
+        # 4. Header/CRC check, play_cli integration check, and Attention vs MLP heterogeneous evaluation check
         check_corrupted_weights(args.match_cli.resolve(), trained_weights, root)
         check_play_cli_attention(args.play_cli.resolve(), trained_weights)
+
+        mlp_weights = root / "mlp_weights.bin"
+        mlp_weights.write_bytes(bytes(74376))
+        hetero = subprocess.run(
+            [str(args.match_cli.resolve()), "--rules", "wb", "--evaluate",
+             "--model-type", "attention", "--weights", str(trained_weights),
+             "--opponent-model-type", "mlp", "--opponent-weights", str(mlp_weights),
+             "--games", "4", "--threads", "2", "--simulations", "4", "--seed", "20261124"],
+            check=True, capture_output=True, text=True, timeout=30,
+        )
+        assert "model_type=attention" in hetero.stdout and "opponent_model_type=mlp" in hetero.stdout
+        assert "A_first=2 A_second=2" in hetero.stdout
 
         print(f"PASS Attention PyTorch vs C++20 parity (max_err={max(err_random, err_trained):.2e} < 1e-4), logs, and CLI")
 

@@ -40,6 +40,7 @@ struct MatchOptions {
     SnapshotOpponent snapshot;
     bool opponent_perfect_information = false;
     attn::ModelType model_type = attn::ModelType::Mlp;
+    std::optional<attn::ModelType> opponent_model_type;
 };
 
 void run_match(const MatchOptions& options);

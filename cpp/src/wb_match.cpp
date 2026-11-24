@@ -311,10 +311,32 @@ void start_trace(std::ostream& out, const Game& game, std::uint64_t id, const Ma
     out << "  ],\n  \"turns\":[\n";
 }
 
-template<class Model>
-Game play(const MatchOptions& options, const MatchupFeatures& matchup, const Model& a, const Model& b,
+struct LoadedModel {
+    std::optional<Mlp> mlp;
+    std::optional<attn::AttentionModel> attention;
+
+    static LoadedModel load(attn::ModelType type, const std::filesystem::path& file) {
+        LoadedModel result;
+        if (type == attn::ModelType::Attention) result.attention.emplace(attn::AttentionModel::load(file));
+        else result.mlp.emplace(Mlp::load(file));
+        return result;
+    }
+
+    static LoadedModel random(attn::ModelType type, std::uint32_t seed) {
+        LoadedModel result;
+        if (type == attn::ModelType::Attention) result.attention.emplace(attn::AttentionModel::random(seed));
+        else result.mlp.emplace(Mlp::random(seed));
+        return result;
+    }
+
+    [[nodiscard]] ModelRef ref() const {
+        return attention ? ModelRef(*attention) : ModelRef(*mlp);
+    }
+};
+
+template<bool IsAttention>
+Game play(const MatchOptions& options, const MatchupFeatures& matchup, ModelRef a, ModelRef b,
           std::uint64_t id, bool trace) {
-    constexpr bool is_attention = std::is_same_v<Model, attn::AttentionModel>;
     const auto start = Clock::now();
     const int a_seat = static_cast<int>(id % 2);
     std::seed_seq seed{options.seed, static_cast<std::uint32_t>(id), static_cast<std::uint32_t>(id >> 32)};
@@ -323,10 +345,10 @@ Game play(const MatchOptions& options, const MatchupFeatures& matchup, const Mod
     const auto deck_seed = high | rng();
     auto state = a_seat == 0 ? new_game(options.deck_a, options.deck_b, deck_seed)
                             : new_game(options.deck_b, options.deck_a, deck_seed);
-    const std::array<const Model*, kPlayers> models{a_seat == 0 ? &a : &b, a_seat == 0 ? &b : &a};
+    const std::array<ModelRef, kPlayers> models{a_seat == 0 ? a : b, a_seat == 0 ? b : a};
     auto search_options = options.search;
     search_options.record_actions = trace;
-    Search search(*models[0], *models[1], rng, search_options, &matchup);
+    Search search(models[0], models[1], rng, search_options, &matchup);
     Game game;
     for (int seat = 0; seat < kPlayers; ++seat) {
         auto& opening = game.opening[seat];
@@ -334,7 +356,7 @@ Game play(const MatchOptions& options, const MatchupFeatures& matchup, const Mod
         const auto action = options.random_opponent && seat != a_seat
             ? Action{ActionType::Mulligan, kNoTarget, kNoTarget,
                      static_cast<std::uint8_t>(std::uniform_int_distribution<int>(0, (1 << kOpeningHand) - 1)(rng))}
-            : choose_mulligan(state, *models[seat], rng, &matchup);
+            : choose_mulligan(state, models[seat], rng, &matchup);
         opening.mask = action.choice;
         for (int i = 0; i < kOpeningHand; ++i) {
             if (!(action.choice & (1 << i))) {
@@ -377,7 +399,7 @@ Game play(const MatchOptions& options, const MatchupFeatures& matchup, const Mod
             }
         } else {
             if (logging) {
-                if constexpr (is_attention) {
+                if constexpr (IsAttention) {
                     game.attention_log.values.push_back({extract_attention_tokens(state), 0});
                 } else {
                     game.log.values.push_back({extract_features(state, &matchup), 0});
@@ -390,7 +412,7 @@ Game play(const MatchOptions& options, const MatchupFeatures& matchup, const Mod
                 write_turn(trace_data, state, decision, game.turns, options.trace_top);
             }
             if (logging) {
-                if constexpr (is_attention) {
+                if constexpr (IsAttention) {
                     game.attention_log.policy_sizes.push_back(static_cast<std::int32_t>(decision.attention_policy.size()));
                     for (const auto& sample : decision.attention_policy) {
                         game.attention_log.policies.push_back({sample.features, sample.probability});
@@ -411,7 +433,7 @@ Game play(const MatchOptions& options, const MatchupFeatures& matchup, const Mod
     game.elapsed = std::chrono::duration<double>(Clock::now() - start).count();
     for (std::size_t i = 0; i < value_seats.size(); ++i) {
         const float target = outcome_value(game.outcome, value_seats[i]);
-        if constexpr (is_attention) {
+        if constexpr (IsAttention) {
             game.attention_log.values[i].target = target;
         } else {
             game.log.values[i].target = target;
@@ -464,11 +486,25 @@ void run_match_impl(const MatchOptions& options) {
     constexpr bool is_attention = std::is_same_v<Model, attn::AttentionModel>;
     const MatchupFeatures matchup(options.deck_a, options.deck_b);
     static_cast<void>(new_game(options.deck_a, options.deck_b, options.seed));
-    const auto a = options.weights.empty() ? Model::random(options.seed) : Model::load(options.weights);
-    const auto b = !options.opponent_weights.empty() ? Model::load(options.opponent_weights)
-                 : options.opponent_seed ? Model::random(*options.opponent_seed) : a;
-    std::optional<Model> snapshot;
-    if (options.snapshot.basis_points) snapshot = Model::load(options.snapshot.weights);
+    const auto opponent_type = options.opponent_model_type.value_or(options.model_type);
+    const auto a = options.weights.empty() ? LoadedModel::random(options.model_type, options.seed)
+                                           : LoadedModel::load(options.model_type, options.weights);
+    std::optional<LoadedModel> b_storage;
+    if (!options.opponent_weights.empty()) {
+        b_storage = LoadedModel::load(opponent_type, options.opponent_weights);
+    } else if (options.opponent_seed) {
+        b_storage = LoadedModel::random(opponent_type, *options.opponent_seed);
+    } else if (opponent_type != options.model_type) {
+        b_storage = LoadedModel::random(opponent_type, options.seed);
+    }
+    const ModelRef a_ref = a.ref();
+    const ModelRef b_ref = b_storage ? b_storage->ref() : a_ref;
+    std::optional<LoadedModel> snapshot;
+    if (options.snapshot.basis_points) {
+        const auto snap_type = attn::is_attention_weights_file(options.snapshot.weights)
+            ? attn::ModelType::Attention : options.model_type;
+        snapshot = LoadedModel::load(snap_type, options.snapshot.weights);
+    }
     std::optional<Logs> logs;
     if (!options.log_dir.empty()) {
         logs.emplace(options.log_dir);
@@ -493,7 +529,7 @@ void run_match_impl(const MatchOptions& options) {
                     break;
                 }
                 const bool against_snapshot = snapshot && options.snapshot.plays(id);
-                const auto game = play(options, matchup, a, against_snapshot ? *snapshot : b, id, false);
+                const auto game = play<is_attention>(options, matchup, a_ref, against_snapshot ? snapshot->ref() : b_ref, id, false);
                 const auto a_seat = static_cast<int>(id % 2);
                 const std::scoped_lock lock(mutex);
                 if (logs) {
@@ -568,7 +604,7 @@ void run_match_impl(const MatchOptions& options) {
         csv.close();
         const auto trace = [&](std::uint64_t id, Outcome expected, std::string_view name) {
             const bool against_snapshot = snapshot && options.snapshot.plays(id);
-            const auto game = play(options, matchup, a, against_snapshot ? *snapshot : b, id, true);
+            const auto game = play<is_attention>(options, matchup, a_ref, against_snapshot ? snapshot->ref() : b_ref, id, true);
             if (game.outcome != expected) {
                 throw std::logic_error("Replayed trace winner differs from the match result");
             }
@@ -597,6 +633,9 @@ void run_match_impl(const MatchOptions& options) {
               << " feature_schema=" << (is_attention ? attention_feature_schema() : feature_schema(matchup));
     if constexpr (is_attention) {
         std::cout << " model_type=attention";
+    }
+    if (opponent_type != options.model_type) {
+        std::cout << " opponent_model_type=" << (opponent_type == attn::ModelType::Attention ? "attention" : "mlp");
     }
     std::cout << " information=" << (options.search.determinization ? "determinized" : "perfect")
               << " opponent_information=" << (options.random_opponent ? "random" :

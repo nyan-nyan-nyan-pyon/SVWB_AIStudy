@@ -55,12 +55,24 @@ struct Decision {
     bool replanned = false;
 };
 
+struct ModelRef {
+    const Mlp* mlp = nullptr;
+    const attn::AttentionModel* attention = nullptr;
+
+    ModelRef() = default;
+    ModelRef(const Mlp& model) : mlp(&model) {}
+    ModelRef(const attn::AttentionModel& model) : attention(&model) {}
+    [[nodiscard]] bool is_attention() const { return attention != nullptr; }
+};
+
 class Search {
 public:
     Search(const Mlp& first, const Mlp& second, std::mt19937& rng, SearchOptions options,
            const MatchupFeatures* matchup = nullptr);
     Search(const attn::AttentionModel& first, const attn::AttentionModel& second, std::mt19937& rng,
            SearchOptions options, const MatchupFeatures* matchup = nullptr);
+    Search(ModelRef first, ModelRef second, std::mt19937& rng, SearchOptions options,
+           const MatchupFeatures* matchup = nullptr);
     ~Search();
     // Research plans and candidate values describe the sampled position.
     [[nodiscard]] Decision choose(const GameState& state, bool policy);
@@ -86,6 +98,8 @@ private:
 [[nodiscard]] Action choose_mulligan(const GameState& state, const Mlp& model, std::mt19937& rng,
                                      const MatchupFeatures* matchup = nullptr);
 [[nodiscard]] Action choose_mulligan(const GameState& state, const attn::AttentionModel& model, std::mt19937& rng,
+                                     const MatchupFeatures* matchup = nullptr);
+[[nodiscard]] Action choose_mulligan(const GameState& state, ModelRef model, std::mt19937& rng,
                                      const MatchupFeatures* matchup = nullptr);
 [[nodiscard]] float outcome_value(Outcome outcome, int seat);
 

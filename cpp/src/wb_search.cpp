@@ -356,6 +356,104 @@ BoardSummary summarize_board(const PlayerState& player) {
     return summary;
 }
 
+attn::CandidateFeatures extract_candidate_features_with_base(const GameState& initial, const BoardSummary& i_own_b,
+                                                             const BoardSummary& i_opp_b, const GameState& decision,
+                                                             const GameState& next) {
+    attn::CandidateFeatures f{};
+    const int actor = initial.turn_player;
+    const int enemy = 1 - actor;
+    const auto& i_own = initial.players[actor];
+    const auto& i_opp = initial.players[enemy];
+    const auto& d_own = decision.players[actor];
+    const auto& d_opp = decision.players[enemy];
+    const auto& n_own = next.players[actor];
+    const auto& n_opp = next.players[enemy];
+
+    const auto d_own_b = summarize_board(d_own);
+    const auto n_own_b = (&d_own == &n_own) ? d_own_b : summarize_board(n_own);
+    const auto n_opp_b = summarize_board(n_opp);
+
+    const bool win = next.outcome != Outcome::Ongoing && outcome_value(next.outcome, actor) == 1.0F;
+    const bool lose = next.outcome != Outcome::Ongoing && outcome_value(next.outcome, actor) == 0.0F;
+    const bool direct_win = decision.outcome != Outcome::Ongoing && outcome_value(decision.outcome, actor) == 1.0F;
+
+    f[0] = static_cast<float>(win);
+    f[1] = static_cast<float>(lose);
+    f[2] = static_cast<float>(direct_win);
+    f[3] = static_cast<float>(n_opp.leader_hp <= 5);
+
+    f[4] = std::max(0, static_cast<int>(n_own.leader_hp)) / 20.0F;
+    f[5] = std::max(0, static_cast<int>(n_opp.leader_hp)) / 20.0F;
+    f[6] = (static_cast<int>(n_own.leader_hp) - static_cast<int>(i_own.leader_hp)) / 20.0F;
+    f[7] = (static_cast<int>(i_opp.leader_hp) - static_cast<int>(n_opp.leader_hp)) / 20.0F;
+    f[8] = (static_cast<int>(d_own.leader_hp) - static_cast<int>(i_own.leader_hp)) / 20.0F;
+    f[9] = (static_cast<int>(i_opp.leader_hp) - static_cast<int>(d_opp.leader_hp)) / 20.0F;
+    f[10] = static_cast<float>(n_own.leader_barrier) - static_cast<float>(i_own.leader_barrier);
+    f[11] = static_cast<float>(n_opp.leader_barrier) - static_cast<float>(i_opp.leader_barrier);
+
+    const int rem_pp = d_own.available_pp();
+    const int spent_pp = std::max(0, i_own.available_pp() - rem_pp);
+    const int plays_delta = std::max(0, static_cast<int>(d_own.plays_this_turn) - static_cast<int>(i_own.plays_this_turn));
+    const int entered_delta = std::max(0, static_cast<int>(d_own.followers_entered) - static_cast<int>(i_own.followers_entered));
+
+    f[12] = rem_pp / 11.0F;
+    f[13] = spent_pp / 11.0F;
+    f[14] = static_cast<float>(rem_pp == 0);
+    f[15] = static_cast<float>(std::max(0, static_cast<int>(i_own.ep) - static_cast<int>(d_own.ep)));
+    f[16] = static_cast<float>(std::max(0, static_cast<int>(i_own.sep) - static_cast<int>(d_own.sep)));
+    f[17] = static_cast<float>(d_own.manual_evolved && !i_own.manual_evolved);
+    f[18] = static_cast<float>(std::max(0, static_cast<int>(i_own.extra_pp_uses) - static_cast<int>(d_own.extra_pp_uses)));
+    f[19] = std::min(10, plays_delta) / 10.0F;
+    f[20] = std::min(10, entered_delta) / 10.0F;
+    f[21] = static_cast<float>(d_own.attacked_leader_this_turn);
+    f[22] = static_cast<float>(d_own.acted_evidence || d_own.acted_amulet);
+    f[23] = static_cast<float>(plays_delta == 0 && d_own_b.attacked_count == 0 && !d_own.acted_amulet && !d_own.acted_evidence);
+
+    f[24] = std::min(9, std::max(0, i_own.deck_remaining() - d_own.deck_remaining())) / 9.0F;
+    f[25] = d_own.hand_count / 9.0F;
+    f[26] = (static_cast<int>(d_own.hand_count) - static_cast<int>(i_own.hand_count)) / 9.0F;
+    f[27] = n_own.hand_count / 9.0F;
+    f[28] = std::min(16, std::max(0, static_cast<int>(n_own.shadows) - static_cast<int>(i_own.shadows))) / 16.0F;
+    f[29] = std::min(16, std::max(0, static_cast<int>(n_opp.shadows) - static_cast<int>(i_opp.shadows))) / 16.0F;
+    f[30] = (static_cast<int>(n_own.max_pp) - static_cast<int>(i_own.max_pp)) / 10.0F;
+    f[31] = (static_cast<int>(n_own.crest_count) - static_cast<int>(i_own.crest_count)) / 5.0F;
+
+    f[32] = n_own_b.follower_count / 5.0F;
+    f[33] = n_own_b.amulet_count / 5.0F;
+    f[34] = (n_own_b.follower_count - i_own_b.follower_count) / 5.0F;
+    f[35] = (n_own_b.amulet_count - i_own_b.amulet_count) / 5.0F;
+    f[36] = n_own_b.total_atk / 30.0F;
+    f[37] = n_own_b.total_hp / 30.0F;
+    f[38] = (n_own_b.total_atk - i_own_b.total_atk) / 30.0F;
+    f[39] = (n_own_b.total_hp - i_own_b.total_hp) / 30.0F;
+    f[40] = n_own_b.max_atk / 15.0F;
+    f[41] = n_own_b.ward_count / 5.0F;
+    f[42] = n_own_b.ward_hp / 20.0F;
+    f[43] = n_own_b.evolved_count / 5.0F;
+    f[44] = n_own_b.super_evolved_count / 5.0F;
+    f[45] = n_own_b.special_keywords / 10.0F;
+    f[46] = d_own_b.attacked_count / 5.0F;
+    f[47] = (n_own_b.earth_stacks - i_own_b.earth_stacks) / 10.0F;
+
+    f[48] = n_opp_b.follower_count / 5.0F;
+    f[49] = n_opp_b.amulet_count / 5.0F;
+    f[50] = (i_opp_b.follower_count - n_opp_b.follower_count) / 5.0F;
+    f[51] = (i_opp_b.amulet_count - n_opp_b.amulet_count) / 5.0F;
+    f[52] = n_opp_b.total_atk / 30.0F;
+    f[53] = n_opp_b.total_hp / 30.0F;
+    f[54] = (i_opp_b.total_atk - n_opp_b.total_atk) / 30.0F;
+    f[55] = (i_opp_b.total_hp - n_opp_b.total_hp) / 30.0F;
+    f[56] = n_opp_b.max_atk / 15.0F;
+    f[57] = n_opp_b.ward_count / 5.0F;
+    f[58] = n_opp_b.ward_hp / 20.0F;
+    f[59] = static_cast<float>(n_opp_b.follower_count == 0);
+    f[60] = (n_own_b.total_atk - n_opp_b.total_atk) / 30.0F;
+    f[61] = (n_own_b.total_hp - n_opp_b.total_hp) / 30.0F;
+    f[62] = static_cast<float>(n_opp_b.total_atk >= n_own.leader_hp && n_own_b.ward_count == 0);
+    f[63] = (static_cast<int>(n_own.leader_hp) - static_cast<int>(n_opp.leader_hp)) / 20.0F;
+    return f;
+}
+
 struct BeamNode {
     GameState state;
     Prediction prediction;
@@ -520,6 +618,9 @@ BeamResult beam_attention(const GameState& initial, const attn::AttentionModel& 
         if constexpr (Legacy) return legacy_key(state);
         else return state;
     };
+    const int initial_actor = initial.turn_player;
+    const auto i_own_b = summarize_board(initial.players[initial_actor]);
+    const auto i_opp_b = summarize_board(initial.players[1 - initial_actor]);
     std::unordered_map<Key, bool, Hash> seen;
     std::unordered_set<Key, Hash> finished;
     seen.reserve(width * 24);
@@ -549,7 +650,10 @@ BeamResult beam_attention(const GameState& initial, const attn::AttentionModel& 
         std::reverse(candidate.actions.begin(), candidate.actions.end());
     };
     const auto force = [&](const GameState& next, const GameState& decision, std::size_t parent, Action action) {
-        Candidate candidate{next, decision, {}, {}, 0.0F, 0, extract_candidate_features(initial, decision, next)};
+        Candidate candidate{
+            next, decision, {}, {}, 0.0F, 0,
+            extract_candidate_features_with_base(initial, i_own_b, i_opp_b, decision, next),
+        };
         record(candidate, parent, action);
         return BeamResult{{}, std::move(candidate)};
     };
@@ -568,7 +672,7 @@ BeamResult beam_attention(const GameState& initial, const attn::AttentionModel& 
         if (!finished.insert(key_for(next)).second) {
             return;
         }
-        const auto cand_features = extract_candidate_features(initial, decision, next);
+        const auto cand_features = extract_candidate_features_with_base(initial, i_own_b, i_opp_b, decision, next);
         const float policy_logit = model.policy_logit(root_context, cand_features.data());
         const Prediction prediction{root_value, policy_logit};
         const auto order_id = completed++;
@@ -622,7 +726,7 @@ BeamResult beam_attention(const GameState& initial, const attn::AttentionModel& 
                 if (next.outcome != Outcome::Ongoing) {
                     finish(next, next, node.id, action);
                 } else {
-                    const auto step_features = extract_candidate_features(initial, next, next);
+                    const auto step_features = extract_candidate_features_with_base(initial, i_own_b, i_opp_b, next, next);
                     const float step_logit = model.policy_logit(root_context, step_features.data());
                     const Prediction prediction{1.0F / (1.0F + std::exp(-step_logit)), step_logit};
                     const auto id = ++serial;
@@ -870,101 +974,9 @@ attn::Tokens extract_attention_tokens(const GameState& state) {
 
 attn::CandidateFeatures extract_candidate_features(const GameState& initial, const GameState& decision,
                                                    const GameState& next) {
-    attn::CandidateFeatures f{};
     const int actor = initial.turn_player;
-    const int enemy = 1 - actor;
-    const auto& i_own = initial.players[actor];
-    const auto& i_opp = initial.players[enemy];
-    const auto& d_own = decision.players[actor];
-    const auto& d_opp = decision.players[enemy];
-    const auto& n_own = next.players[actor];
-    const auto& n_opp = next.players[enemy];
-
-    const auto i_own_b = summarize_board(i_own);
-    const auto i_opp_b = summarize_board(i_opp);
-    const auto d_own_b = summarize_board(d_own);
-    const auto n_own_b = (&d_own == &n_own) ? d_own_b : summarize_board(n_own);
-    const auto n_opp_b = summarize_board(n_opp);
-
-    const bool win = next.outcome != Outcome::Ongoing && outcome_value(next.outcome, actor) == 1.0F;
-    const bool lose = next.outcome != Outcome::Ongoing && outcome_value(next.outcome, actor) == 0.0F;
-    const bool direct_win = decision.outcome != Outcome::Ongoing && outcome_value(decision.outcome, actor) == 1.0F;
-
-    f[0] = static_cast<float>(win);
-    f[1] = static_cast<float>(lose);
-    f[2] = static_cast<float>(direct_win);
-    f[3] = static_cast<float>(n_opp.leader_hp <= 5);
-
-    f[4] = std::max(0, static_cast<int>(n_own.leader_hp)) / 20.0F;
-    f[5] = std::max(0, static_cast<int>(n_opp.leader_hp)) / 20.0F;
-    f[6] = (static_cast<int>(n_own.leader_hp) - static_cast<int>(i_own.leader_hp)) / 20.0F;
-    f[7] = (static_cast<int>(i_opp.leader_hp) - static_cast<int>(n_opp.leader_hp)) / 20.0F;
-    f[8] = (static_cast<int>(d_own.leader_hp) - static_cast<int>(i_own.leader_hp)) / 20.0F;
-    f[9] = (static_cast<int>(i_opp.leader_hp) - static_cast<int>(d_opp.leader_hp)) / 20.0F;
-    f[10] = static_cast<float>(n_own.leader_barrier) - static_cast<float>(i_own.leader_barrier);
-    f[11] = static_cast<float>(n_opp.leader_barrier) - static_cast<float>(i_opp.leader_barrier);
-
-    const int rem_pp = d_own.available_pp();
-    const int spent_pp = std::max(0, i_own.available_pp() - rem_pp);
-    const int plays_delta = std::max(0, static_cast<int>(d_own.plays_this_turn) - static_cast<int>(i_own.plays_this_turn));
-    const int entered_delta = std::max(0, static_cast<int>(d_own.followers_entered) - static_cast<int>(i_own.followers_entered));
-
-    f[12] = rem_pp / 11.0F;
-    f[13] = spent_pp / 11.0F;
-    f[14] = static_cast<float>(rem_pp == 0);
-    f[15] = static_cast<float>(std::max(0, static_cast<int>(i_own.ep) - static_cast<int>(d_own.ep)));
-    f[16] = static_cast<float>(std::max(0, static_cast<int>(i_own.sep) - static_cast<int>(d_own.sep)));
-    f[17] = static_cast<float>(d_own.manual_evolved && !i_own.manual_evolved);
-    f[18] = static_cast<float>(std::max(0, static_cast<int>(i_own.extra_pp_uses) - static_cast<int>(d_own.extra_pp_uses)));
-    f[19] = std::min(10, plays_delta) / 10.0F;
-    f[20] = std::min(10, entered_delta) / 10.0F;
-    f[21] = static_cast<float>(d_own.attacked_leader_this_turn);
-    f[22] = static_cast<float>(d_own.acted_evidence || d_own.acted_amulet);
-    f[23] = static_cast<float>(plays_delta == 0 && d_own_b.attacked_count == 0 && !d_own.acted_amulet && !d_own.acted_evidence);
-
-    f[24] = std::min(9, std::max(0, i_own.deck_remaining() - d_own.deck_remaining())) / 9.0F;
-    f[25] = d_own.hand_count / 9.0F;
-    f[26] = (static_cast<int>(d_own.hand_count) - static_cast<int>(i_own.hand_count)) / 9.0F;
-    f[27] = n_own.hand_count / 9.0F;
-    f[28] = std::min(16, std::max(0, static_cast<int>(n_own.shadows) - static_cast<int>(i_own.shadows))) / 16.0F;
-    f[29] = std::min(16, std::max(0, static_cast<int>(n_opp.shadows) - static_cast<int>(i_opp.shadows))) / 16.0F;
-    f[30] = (static_cast<int>(n_own.max_pp) - static_cast<int>(i_own.max_pp)) / 10.0F;
-    f[31] = (static_cast<int>(n_own.crest_count) - static_cast<int>(i_own.crest_count)) / 5.0F;
-
-    f[32] = n_own_b.follower_count / 5.0F;
-    f[33] = n_own_b.amulet_count / 5.0F;
-    f[34] = (n_own_b.follower_count - i_own_b.follower_count) / 5.0F;
-    f[35] = (n_own_b.amulet_count - i_own_b.amulet_count) / 5.0F;
-    f[36] = n_own_b.total_atk / 30.0F;
-    f[37] = n_own_b.total_hp / 30.0F;
-    f[38] = (n_own_b.total_atk - i_own_b.total_atk) / 30.0F;
-    f[39] = (n_own_b.total_hp - i_own_b.total_hp) / 30.0F;
-    f[40] = n_own_b.max_atk / 15.0F;
-    f[41] = n_own_b.ward_count / 5.0F;
-    f[42] = n_own_b.ward_hp / 20.0F;
-    f[43] = n_own_b.evolved_count / 5.0F;
-    f[44] = n_own_b.super_evolved_count / 5.0F;
-    f[45] = n_own_b.special_keywords / 10.0F;
-    f[46] = d_own_b.attacked_count / 5.0F;
-    f[47] = (n_own_b.earth_stacks - i_own_b.earth_stacks) / 10.0F;
-
-    f[48] = n_opp_b.follower_count / 5.0F;
-    f[49] = n_opp_b.amulet_count / 5.0F;
-    f[50] = (i_opp_b.follower_count - n_opp_b.follower_count) / 5.0F;
-    f[51] = (i_opp_b.amulet_count - n_opp_b.amulet_count) / 5.0F;
-    f[52] = n_opp_b.total_atk / 30.0F;
-    f[53] = n_opp_b.total_hp / 30.0F;
-    f[54] = (i_opp_b.total_atk - n_opp_b.total_atk) / 30.0F;
-    f[55] = (i_opp_b.total_hp - n_opp_b.total_hp) / 30.0F;
-    f[56] = n_opp_b.max_atk / 15.0F;
-    f[57] = n_opp_b.ward_count / 5.0F;
-    f[58] = n_opp_b.ward_hp / 20.0F;
-    f[59] = static_cast<float>(n_opp_b.follower_count == 0);
-    f[60] = (n_own_b.total_atk - n_opp_b.total_atk) / 30.0F;
-    f[61] = (n_own_b.total_hp - n_opp_b.total_hp) / 30.0F;
-    f[62] = static_cast<float>(n_opp_b.total_atk >= n_own.leader_hp && n_own_b.ward_count == 0);
-    f[63] = (static_cast<int>(n_own.leader_hp) - static_cast<int>(n_opp.leader_hp)) / 20.0F;
-    return f;
+    return extract_candidate_features_with_base(
+        initial, summarize_board(initial.players[actor]), summarize_board(initial.players[1 - actor]), decision, next);
 }
 
 float outcome_value(Outcome outcome, int seat) {
@@ -1004,6 +1016,15 @@ Search::Search(const attn::AttentionModel& first, const attn::AttentionModel& se
     : attention_models_{&first, &second}, rng_(rng), options_(options), matchup_(matchup) {
     if (options.simulations < 1) {
         throw std::invalid_argument("Search needs a positive simulation count");
+    }
+}
+
+Search::Search(ModelRef first, ModelRef second, std::mt19937& rng, SearchOptions options,
+               const MatchupFeatures* matchup)
+    : models_{first.mlp, second.mlp}, attention_models_{first.attention, second.attention},
+      rng_(rng), options_(options), matchup_(matchup) {
+    if (options.simulations < 1 || (!first.mlp && !first.attention) || (!second.mlp && !second.attention)) {
+        throw std::invalid_argument("Search needs valid models and a positive simulation count");
     }
 }
 
@@ -1307,6 +1328,11 @@ Action choose_mulligan(const GameState& state, const attn::AttentionModel& model
     }
     const auto best = std::max_element(values.begin(), values.end()) - values.begin();
     return {ActionType::Mulligan, kNoTarget, kNoTarget, static_cast<std::uint8_t>(best)};
+}
+
+Action choose_mulligan(const GameState& state, ModelRef model, std::mt19937& rng, const MatchupFeatures* matchup) {
+    return model.attention ? choose_mulligan(state, *model.attention, rng, matchup)
+                           : choose_mulligan(state, *model.mlp, rng, matchup);
 }
 
 } // namespace svwb::wb
