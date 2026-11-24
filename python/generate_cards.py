@@ -95,10 +95,12 @@ def generate(directory):
     elf_royal = read(directory, "phase5b2_cards.json")
     dragon_nightmare = read(directory, "phase5b3_cards.json")
     witch_nemesis = read(directory, "phase5b4_cards.json")
+    high_cost = read(directory, "rotation_high_cost_cards.json")
     research = {row["special_effect_id"]: row for row in read(directory, "svwb_special_effect_research.json")["records"]}
-    if any(part["schema"] != 1 for part in (overlay, extension, elf_royal, dragon_nightmare, witch_nemesis)):
+    parts = (overlay, extension, elf_royal, dragon_nightmare, witch_nemesis, high_cost)
+    if any(part["schema"] != 1 for part in parts):
         raise ValueError("Unknown card engine schema version")
-    rules = overlay["cards"] + extension["cards"] + elf_royal["cards"] + dragon_nightmare["cards"] + witch_nemesis["cards"]
+    rules = [row for part in parts for row in part["cards"]]
     forms = {row["source_card_id"]: row for row in research.values() if row["kind"] in ("crystallize", "accelerate")}
     for row in rules:
         if "base_card_id" in row:
@@ -109,15 +111,20 @@ def generate(directory):
     fixed = {row["card_id"]: row["id"] for row in rules if "card_id" in row}
     if len(fixed) != sum("card_id" in row for row in rules):
         raise ValueError("Duplicate official IDs in engine overlays")
-    scope = {card["card_id"] for card in rotation if card["class"] in ("ニュートラル", "ビショップ")}
-    elf = {card["card_id"] for card in rotation if card["class"] == "エルフ"}
-    royal = {card["card_id"] for card in rotation if card["class"] == "ロイヤル"}
-    dragon = {card["card_id"] for card in rotation if card["class"] == "ドラゴン"}
-    nightmare = {card["card_id"] for card in rotation if card["class"] == "ナイトメア"}
-    witch = {card["card_id"] for card in rotation if card["class"] == "ウィッチ"}
-    nemesis = {card["card_id"] for card in rotation if card["class"] == "ネメシス"}
     all_rotation = {card["card_id"] for card in rotation}
-    if len(rotation) != 469 or len(witch) != 62 or len(nemesis) != 64:
+    # The corrector had executable rules for the fixed mirror before it appeared in the catalog.
+    high_cost_ids = ({row["card_id"] for row in high_cost["cards"]} | {11063110}) & all_rotation
+    original = [card for card in rotation if card["card_id"] not in high_cost_ids]
+    scope = {card["card_id"] for card in original if card["class"] in ("ニュートラル", "ビショップ")}
+    elf = {card["card_id"] for card in original if card["class"] == "エルフ"}
+    royal = {card["card_id"] for card in original if card["class"] == "ロイヤル"}
+    dragon = {card["card_id"] for card in original if card["class"] == "ドラゴン"}
+    nightmare = {card["card_id"] for card in original if card["class"] == "ナイトメア"}
+    witch = {card["card_id"] for card in original if card["class"] == "ウィッチ"}
+    nemesis = {card["card_id"] for card in original if card["class"] == "ネメシス"}
+    if len(rotation) != 516 or len(high_cost_ids) != 47 or len(original) != 469 or any(
+        not 8 <= catalog[official]["cost"] <= 10 for official in high_cost_ids
+    ):
         raise ValueError("Unexpected rotation card counts")
     missing = all_rotation - fixed.keys()
     if missing:
@@ -213,9 +220,18 @@ def generate(directory):
                 fields.append(f".{field}={{" + ", ".join(map(str, resolved)) + "}")
             if "fusion_trigger_pp" in rules:
                 fields.append(f".fusion_trigger_pp={cpp(rules['fusion_trigger_pp'], int)}")
+            for key, kind in {"attack_limit": int, "damage_cap": int, "destroy_immune": bool,
+                              "direct_summon_cost_curve": bool, "hand_play_discount": int,
+                              "hand_end_hp_discount_threshold": int}.items():
+                if key in rules:
+                    fields.append(f".{key}={cpp(rules[key], kind)}")
+            if "faith_event_card_id" in rules:
+                fields.append(f".faith_event_card={ids[rules['faith_event_card_id']]}")
+            if "hand_discount_entry_card_id" in rules:
+                fields.append(f".hand_discount_entry_card={ids[rules['hand_discount_entry_card_id']]}")
         out.append("    {" + ", ".join(fields) + "},")
     out.append("};\nconstexpr CrestDef crests[]{")
-    for row in overlay["crests"] + extension["crests"] + elf_royal["crests"] + dragon_nightmare["crests"] + witch_nemesis["crests"]:
+    for row in (entry for part in parts for entry in part["crests"]):
         record = research[row.get("special_effect_id", CREST_SOURCE_IDS.get(row["id"]))]
         out.append(f"    {{{cpp(row['id'], 'CrestId')}, {cpp(record['countdown'] or 0, int)}, "
                    f"{cpp(row['clock'], 'CrestClock')}, {effect_list(row['effects'], ids, implemented)}, "
@@ -225,7 +241,8 @@ def generate(directory):
     out.append("};")
     for name, group in (("rotation_batch", scope), ("rotation_elf", elf), ("rotation_royal", royal),
                         ("rotation_dragon", dragon), ("rotation_nightmare", nightmare),
-                        ("rotation_witch", witch), ("rotation_nemesis", nemesis), ("rotation_all", all_rotation)):
+                        ("rotation_witch", witch), ("rotation_nemesis", nemesis), ("rotation_all", all_rotation),
+                        ("rotation_high_cost", high_cost_ids)):
         out.append(f"constexpr CardId {name}[]{{" + ", ".join(str(ids[id]) for id in sorted(group)) + "};")
     return "\n".join(out)
 

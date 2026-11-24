@@ -2635,7 +2635,7 @@ int witch_nemesis_units() {
 
 int verify_rotation_registry() {
     const auto pool = all_rotation();
-    CHECK(pool.size() == 469);
+    CHECK(pool.size() == 516 && high_cost_rotation().size() == 47);
     std::vector<std::uint32_t> ids;
     for (const auto card : pool) {
         const auto* def = find_card(card);
@@ -2645,8 +2645,279 @@ int verify_rotation_registry() {
     }
     std::sort(ids.begin(), ids.end());
     CHECK(std::adjacent_find(ids.begin(), ids.end()) == ids.end());
-    std::cout << "PASS rotation_catalog implemented=469 accepted=469 missing=0\n";
+    std::cout << "PASS rotation_catalog implemented=" << pool.size() << " accepted=" << ids.size() << " missing=0\n";
     return 0;
+}
+
+void high_cost_cards() {
+    for (const auto id : high_cost_rotation()) {
+        const auto& card = *find_card(id);
+        try {
+            CHECK(card.cost >= 8 && card.cost <= 10 && is_deck_card(id) && official(card.official_id) == id);
+            auto deck = kMirrorDeck;
+            const auto replace = std::find_if(deck.begin(), deck.end(), [id](CardId entry) { return entry != id; });
+            if (std::count(deck.begin(), deck.end(), id) < 3) *replace = id;
+            CHECK(new_game(deck, deck, card.official_id).players[0].deck_end == kDeckSize);
+            Scenario s;
+            s.place(kTrainer, 1);
+            s.hand({id, kTrainer, kLilium});
+            const auto moves = legal_actions(s.state);
+            const auto play = std::find_if(moves.begin(), moves.end(), [](Action move) {
+                return move.type == Play && move.src == 0;
+            });
+            CHECK(play != moves.end());
+            s.run(*play);
+            CHECK(s.player().plays_this_turn == 1 && s.state.outcome == Outcome::Ongoing);
+            CHECK(s.player().board[0].card_id == id);
+            std::cout << "PASS high_cost_card " << card.official_id << '\n';
+        } catch (const std::exception& error) {
+            throw std::runtime_error(std::to_string(card.official_id) + " " + std::string(card.name) + ": " + error.what());
+        }
+    }
+}
+
+void high_cost_combat() {
+    {
+        Scenario s;
+        s.hand({official(10924120)});
+        s.run({Play, 0});
+        for (int i = 0; i < 3; ++i) s.run({Attack, 0, kEnemyLeader});
+        s.reject({Attack, 0, kEnemyLeader});
+        CHECK(s.player(1).leader_hp == 14 && s.player().board[0].attacked_thrice);
+        s.next_own_turn();
+        CHECK(s.legal({Attack, 0, kEnemyLeader}) && !s.player().board[0].attacked_thrice);
+        const auto order = s.player().board[0].creation_order;
+        resolve_effect_steps(s.state, 0, std::array{Effect{.operation=Operation::Silence,
+            .target=Target::ChosenOwnFollower}}, 0, order);
+        s.run({Attack, 0, kEnemyLeader});
+        s.reject({Attack, 0, kEnemyLeader});
+    }
+    {
+        Scenario s;
+        s.hand({official(10654110)});
+        for (int i = 0; i < 3; ++i) s.place(kTrainer, 1);
+        s.run({Play, 0});
+        resolve_effect_steps(s.state, 1, std::array{Effect{.operation=Operation::Destroy,
+            .target=Target::AllEnemyFollowers}});
+        CHECK(s.player().board_count == 1 && s.player().board[0].hp == 10);
+        s.run({SuperEvolve, 0});
+        for (int i = 0; i < 3; ++i) s.run({Attack, 0, 0});
+        CHECK(s.player(1).board_count == 0 && s.player(1).leader_hp == 17);
+        CHECK(s.player().board[0].hp == 13 && s.player().board[0].attacked_thrice);
+    }
+    {
+        Scenario s;
+        s.hand({official(10711110)});
+        s.place(kTrainer, 1).atk = 8;
+        s.run({Play, 0});
+        CHECK(s.player().board_count == 2);
+        s.run({Attack, 0, 0});
+        CHECK(s.player().board[0].hp == 3 && s.player().board[1].hp == 6);
+        resolve_effect_steps(s.state, 1, std::array{Effect{.operation=Operation::Damage,
+            .target=Target::AllEnemyFollowers, .amount=9}});
+        CHECK(s.player().board_count == 1 && s.player().board[0].hp == 3);
+    }
+}
+
+void high_cost_leader_and_summon() {
+    const auto zerael = official(10904110);
+    {
+        Scenario s;
+        s.player().played_cost_mask = 0x0fe;
+        s.player().deck = {zerael, zerael, kTrainer};
+        s.player().deck_idx = 0;
+        s.player().deck_end = 3;
+        s.place(kCorrector, 1);
+        s.hand({official(10862110)});
+        s.player().hand_modifiers[0].cost = -3;
+        s.run({Play, 0});
+        CHECK(s.player().played_cost_mask == 0x1fe);
+        s.run({EndTurn});
+        CHECK(s.player().deck_remaining() == 2 && s.player().board[1].card_id == zerael);
+        CHECK(s.player(1).board[0].hp == 5); // Direct summons do not fire Fanfare.
+    }
+    {
+        Scenario s;
+        s.player().played_cost_mask = 0x0fe;
+        s.player().deck = {zerael};
+        s.player().deck_idx = 0;
+        s.player().deck_end = 1;
+        s.run({EndTurn});
+        CHECK(s.player().board_count == 0 && s.player().deck_remaining() == 1);
+    }
+    {
+        Scenario s;
+        s.player().played_cost_mask = 0x1fe;
+        s.player().deck = {zerael};
+        s.player().deck_idx = 0;
+        s.player().deck_end = 1;
+        for (int i = 0; i < 4; ++i) s.place(kTrainer);
+        s.place(official(10903210));
+        s.run({EndTurn});
+        CHECK(s.player().board_count == 5 && s.player().deck_remaining() == 0);
+        CHECK(s.player().board[4].card_id == zerael && s.player().board[4].atk == 12);
+    }
+    {
+        Scenario s;
+        s.hand({official(10804110)});
+        s.crest(CrestId::Rituel, 1);
+        s.crest(CrestId::Rapid, 2, 1);
+        s.player().faiths[0] = official(10664122);
+        s.player().faith_count = 1;
+        s.run({Play, 0, kNoTarget, 3});
+        CHECK(s.player().crest_count == 0 && s.player(1).crest_count == 0);
+        CHECK(s.player().board_count == 1 && s.player().shadows == 0 && s.player().faith_count == 1);
+    }
+    {
+        Scenario s;
+        s.hand({official(10804120)});
+        s.player().sep = 0;
+        s.run({Play, 0});
+        CHECK(s.player().sep == 2);
+    }
+    for (const bool round_up : {false, true}) {
+        Scenario s;
+        s.rules.round_half_max_hp_up = round_up;
+        s.hand({official(11074110), kEvidence});
+        s.place(kTrainer, 1);
+        s.place(kLilium, 1);
+        s.place(kTrainer, 1);
+        s.player(1).leader_hp = 15;
+        s.player(1).leader_max_hp = 17;
+        s.run({Fuse, 0, kNoTarget, 1});
+        CHECK(s.player().board[0].card_id == kEvidence && s.player().shadows == 0);
+        s.run({Play, 0, 0});
+        CHECK(s.player(1).board_count == 1 && s.player(1).board[0].card_id == kLilium);
+        CHECK(s.player(1).leader_max_hp == (round_up ? 9 : 8) && s.player(1).leader_hp == s.player(1).leader_max_hp);
+    }
+    {
+        const auto omega = official(10604110);
+        bool replayed = false;
+        for (std::uint64_t seed = 0; seed < 64 && !replayed; ++seed) {
+            Scenario limited;
+            limited.rules.fanfare_repeat_limit = 0;
+            limited.state.rng_state = seed;
+            limited.hand({omega});
+            auto normal = limited;
+            normal.rules.fanfare_repeat_limit = 64;
+            limited.run({Play, 0});
+            normal.run({Play, 0});
+            CHECK(limited.player().board[0].atk <= 8);
+            replayed = limited.state.rng_state != normal.state.rng_state;
+            if (replayed) CHECK(limited.player().board[0].atk == 8);
+        }
+        CHECK(replayed);
+    }
+}
+
+void high_cost_supplements() {
+    for (const auto [id, code, cd] : std::array<std::tuple<CrestId, std::uint32_t, int>, 3>{{
+        {CrestId::BurnedKnight, 10744112, 0}, {CrestId::ElderDragon, 10744122, 2}, {CrestId::Rezeal, 11004112, 0},
+    }}) {
+        const auto* crest = find_crest(id);
+        CHECK(crest && crest->official_id == code && crest->countdown == cd);
+    }
+    {
+        Scenario s;
+        s.hand({official(10744110)});
+        s.run({Play, 0});
+        s.run({SuperEvolve, 0});
+        CHECK(s.player(1).crests[0].id == CrestId::BurnedKnight);
+        s.run({EndTurn});
+        CHECK(s.player(1).leader_hp == 18);
+        constexpr Effect heal{.operation=Operation::Heal, .target=Target::OwnLeader, .amount=1};
+        resolve_effect_steps(s.state, 1, std::array{heal});
+        CHECK(s.player(1).leader_hp == 18);
+        resolve_effect_steps(s.state, 1, std::array{heal});
+        CHECK(s.player(1).leader_hp == 19);
+    }
+    {
+        Scenario s;
+        s.hand({official(10744120)});
+        s.run({Play, 0});
+        CHECK(s.player().board_count == 2 && s.player().crests[0].countdown == 2);
+        s.run({SuperEvolve, 0});
+        CHECK(s.player().crests[0].countdown == 4);
+        s.run({EndTurn});
+        CHECK(s.player().board_count == 3);
+    }
+    {
+        Scenario s;
+        s.crest(CrestId::Rezeal, 0);
+        s.hand({official(10021130)});
+        s.run({Play, 0});
+        CHECK(s.player().board[0].modifiers.effect_flags & kRebirthLastWords);
+        s.reject({Attack, 0, kEnemyLeader});
+        const auto before = s.player().board[0].creation_order;
+        resolve_effect_steps(s.state, 1, std::array{Effect{.operation=Operation::Destroy, .target=Target::AllEnemyFollowers}});
+        CHECK(s.player().board_count == 1 && s.player().board[0].creation_order != before &&
+              !(s.player().board[0].modifiers.effect_flags & kRebirthLastWords));
+    }
+    {
+        Scenario s;
+        s.place(kWingedStatue);
+        s.place(kProjectedStatue);
+        s.hand({official(10764110)});
+        s.run({Play, 0});
+        CHECK(s.player().board[3].card_id == official(90064210) && s.player().board[3].countdown == 1 &&
+              !can_choose_enemy_permanent(s.player().board[3]));
+        s.run({Evolve, 2});
+        CHECK(s.player().board[3].countdown == 2);
+        s.run({EndTurn});
+        CHECK(s.player(1).leader_hp == 17);
+    }
+    {
+        const auto liant = official(10664120);
+        const auto book = official(90064320);
+        Scenario s;
+        auto deck = kMirrorDeck;
+        deck[0] = liant;
+        CHECK(new_game(deck, deck, 1).players[0].faiths[0] == official(10664122));
+        s.player().faiths[0] = official(10664122);
+        s.player().faith_count = 1;
+        s.player().faith_values[0] = 9;
+        s.place(kWingedStatue);
+        s.place(kTrainer, 1);
+        s.place(kLilium, 1);
+        s.hand({liant});
+        s.run({Play, 0, kNoTarget, 0, kBothBoardsSelection | 1 | (3 << kBoardLimit)});
+        CHECK(s.player().board_count == 2 && s.player(1).board_count == 0 && s.player().faith_values[0] == 10);
+        s.next_own_turn();
+        CHECK(s.player().faith_values[0] == 0 && s.player().hand[0] == book);
+        s.place(kWingedStatue);
+        s.run({Play, 0, kOwnBoardTarget + 2});
+        CHECK(s.player(1).leader_hp == 18 && s.player().hand[1] == book && s.player().faith_values[0] == 1);
+    }
+    {
+        const auto kald = official(10634120);
+        const auto gem = official(10631110);
+        const auto abyss = official(90034330);
+        Scenario s;
+        s.player().faiths[0] = official(10634122);
+        s.player().faith_count = 1;
+        s.player().faith_values[0] = 3;
+        s.player().leader_hp = 10;
+        s.hand({abyss, kald});
+        s.run({Play, 0});
+        CHECK(s.player().board[0].card_id == gem && s.player().faith_values[0] == 4);
+        CHECK(s.player().hand_modifiers[0].cost == -1);
+        CHECK(s.player().board[0].atk - find_card(gem)->atk + s.player().leader_hp - 10 + 20 - s.player(1).leader_hp == 3);
+    }
+    {
+        const auto macmillan = official(10754120);
+        const auto zombie = official(90051140);
+        Scenario s;
+        s.player().shadows = 10;
+        s.hand({macmillan});
+        s.run({Play, 0});
+        CHECK(s.player().board_count == 4 && s.player(1).leader_hp == 17);
+        CHECK(s.player().board[1].atk == find_card(zombie)->atk + 1 &&
+              (s.player().board[1].abilities & (FLAG_RUSH | FLAG_WARD)) == (FLAG_RUSH | FLAG_WARD));
+        s.run({EndTurn});
+        resolve_effect_steps(s.state, 0, std::array{Effect{.operation=Operation::Summon, .amount=1, .card=zombie}});
+        CHECK(s.player().board_count == 5 && s.player().board[4].atk == find_card(zombie)->atk &&
+              s.player(1).leader_hp == 17);
+    }
 }
 
 void validate_rotation(const GameState& state) {
@@ -2996,6 +3267,13 @@ int main(int argc, char** argv) {
             if (mode == "--actor-audit") actor_audit();
             else if (mode == "--canonicalization") search_canonicalization();
             else if (mode == "--forced-lethal") search_forced_lethal();
+            else if (mode == "--high-cost-unit") {
+                high_cost_cards();
+                high_cost_combat();
+                high_cost_leader_and_summon();
+                high_cost_supplements();
+                std::cout << "PASS high_cost cards=47 tokens=3 crests=3 faiths=2\n";
+            }
             else throw std::invalid_argument("Unknown test_wb mode");
             return 0;
         } catch (const std::exception& error) {
@@ -3006,6 +3284,6 @@ int main(int argc, char** argv) {
     std::cerr << "Usage: test_wb [--stress|--rotation-unit|--rotation-stress|--elf-royal-unit|--elf-stress|--royal-stress"
                  "|--dragon-nightmare-unit|--dragon-stress|--nightmare-stress|--witch-nemesis-unit|--witch-stress"
                  "|--nemesis-stress|--rotation-registry|--full-rotation-stress|--actor-audit|--canonicalization"
-                 "|--forced-lethal|--deck-pair-stress DECK_A DECK_B GAMES]\n";
+                 "|--forced-lethal|--high-cost-unit|--deck-pair-stress DECK_A DECK_B GAMES]\n";
     return 2;
 }

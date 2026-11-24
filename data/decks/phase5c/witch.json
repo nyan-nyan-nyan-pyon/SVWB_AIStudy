@@ -1,0 +1,65 @@
+{
+  "name": "ウィッチ",
+  "class": "ウィッチ",
+  "class_id": 3,
+  "format_version": 1,
+  "source_hash": "1.3.cH1g.cH1g.cH1g.cH3E.eBpe.eBpe.eBpe.ey9E.ey9E.ey9E.eyCM.eyCM.eyCM.fKNE.fKNE.fKNE.fKcs.fKcs.fKcs.fKpM.fKpM.fKpM.fKsU.fKsU.fKsU.g5Ok.g5Ok.g5Ok.g5Rs.g5Rs.g5Rs.g5hU.g5hU.g5hU.g5t-.g5t-.g5t-.g5u8.g5u8.g5u8",
+  "cards": [
+    {
+      "card_id": 10031210,
+      "copies": 3
+    },
+    {
+      "card_id": 10031310,
+      "copies": 1
+    },
+    {
+      "card_id": 10534120,
+      "copies": 3
+    },
+    {
+      "card_id": 10732110,
+      "copies": 3
+    },
+    {
+      "card_id": 10732310,
+      "copies": 3
+    },
+    {
+      "card_id": 10831310,
+      "copies": 3
+    },
+    {
+      "card_id": 10832310,
+      "copies": 3
+    },
+    {
+      "card_id": 10833110,
+      "copies": 3
+    },
+    {
+      "card_id": 10833310,
+      "copies": 3
+    },
+    {
+      "card_id": 11032110,
+      "copies": 3
+    },
+    {
+      "card_id": 11032310,
+      "copies": 3
+    },
+    {
+      "card_id": 11033310,
+      "copies": 3
+    },
+    {
+      "card_id": 11034110,
+      "copies": 3
+    },
+    {
+      "card_id": 11034120,
+      "copies": 3
+    }
+  ]
+}

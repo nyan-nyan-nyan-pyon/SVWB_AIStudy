@@ -1,0 +1,212 @@
+{
+  "schema": 1,
+  "cards": [
+    {"id":637,"card_id":10734120,"abilities":"FLAG_WARD", "effects": [
+      {"trigger":"OnPlay","operation":"Damage","target":"AllEnemyFollowers","amount":6},
+      {"trigger":"LastWords","operation":"EarthRite","amount":2},
+      {"trigger":"LastWords","operation":"Damage","target":"EnemyLeader","amount":3,"condition":"CostPaid"},
+      {"trigger":"OnSuperEvolve","operation":"Summon","amount":1,"card_id":10734120}
+    ]},
+    {"id":638,"card_id":11034120, "effects": [
+      {"trigger":"OnPlay","operation":"SplitDamage","magnitude":"EarthSigils"}
+    ]},
+    {"id":639,"card_id":10032120,"spellboost":true,"spellboost_cost_reduction":1},
+    {"id":640,"card_id":10534120,"spellboost":true,"spellboost_cost_reduction":1, "effects": [
+      {"trigger":"OnPlay","operation":"Damage","target":"ChosenEnemyFollower","amount":10},
+      {"trigger":"OnEvolve","operation":"Transform","target":"ChosenOtherFollower","card_id":90061130}
+    ]},
+    {"id":641,"card_id":10634120,"faith_id":10634122,"hand_discount_entry_card_id":10631110, "effects": [
+      {"trigger":"OnPlay","operation":"Summon","amount":2,"card_id":10631110,"granted_abilities":"FLAG_STORM"},
+      {"trigger":"OnEvolve","operation":"AddHand","amount":1,"card_id":90034330}
+    ]},
+    {"id":642,"card_id":10934120,"spellboost":true,"spellboost_cost_reduction":1,"abilities":["kBane","FLAG_WARD","kAura"]},
+    {"id":643,"card_id":10614110,"abilities":"kDoubleStrike", "effects": [
+      {"trigger":"OnPlay","operation":"Summon","amount":3,"card_id":90011120},
+      {"trigger":"OnSuperEvolve","operation":"Destroy","target":"ChosenEnemyFollower"}
+    ]},
+    {"id":644,"card_id":10711110,"abilities":["FLAG_RUSH","FLAG_WARD"],"damage_cap":3, "effects": [
+      {"trigger":"OnPlay","operation":"Custom","handler":"CopySource"}
+    ]},
+    {"id":645,"card_id":11014120, "effects": [
+      {"trigger":"OnPlay","operation":"Custom","handler":"DrawToBoard"},
+      {"trigger":"OnPlay","operation":"Custom","handler":"DrawToBoard"},
+      {"trigger":"OnSuperEvolve","operation":"Custom","handler":"DrawToBoard"},
+      {"trigger":"OnSuperEvolve","operation":"Custom","handler":"DrawToBoard"}
+    ]},
+    {"id":646,"card_id":10914120,"hand_play_discount":1, "effects": [
+      {"trigger":"OnPlay","operation":"Damage","target":"ChosenEnemyFollower","amount":4},
+      {"trigger":"LastWords","operation":"Summon","amount":1,"card_id":10914120}
+    ]},
+    {"id":647,"card_id":10041130, "effects": [
+      {"trigger":"OnPlay","operation":"Damage","target":"EnemyLeader","amount":6}
+    ]},
+    {"id":648,"card_id":10542110, "effects": [
+      {"trigger":"OnPlay","operation":"Damage","target":"ChosenEnemyFollower","amount":7},
+      {"trigger":"OnPlay","operation":"Summon","amount":1,"card_id":90041120}
+    ]},
+    {"id":649,"card_id":10642120, "effects": [
+      {"trigger":"TurnEnd","operation":"AutoEvolve","target":"Self"},
+      {"trigger":"OnEvolved","operation":"Damage","target":"AllEnemyFollowersAndLeader","amount":3}
+    ]},
+    {"id":650,"card_id":10844120, "effects": [
+      {"trigger":"OnPlay","operation":"Discard","target":"ChosenOwnHandTwo"},
+      {"trigger":"OnPlay","operation":"Damage","target":"AllEnemyFollowersAndLeader","amount":4},
+      {"trigger":"OnSuperEvolve","operation":"Draw","amount":3}
+    ]},
+    {"id":651,"card_id":10942120, "effects": [
+      {"trigger":"OnPlay","operation":"Heal","target":"OwnLeader","amount":3},
+      {"trigger":"OnPlay","operation":"RestorePp","amount":3},
+      {"trigger":"OnEvolve","operation":"Buff","target":"ChosenOtherOwnFollower","amount":3,"health_modifier":3}
+    ]},
+    {"id":652,"card_id":10744110, "effects": [
+      {"trigger":"OnPlay","operation":"Damage","target":"AllEnemyFollowers","amount":9},
+      {"trigger":"OnSuperEvolve","operation":"GrantCrest","crest":"BurnedKnight","target":"EnemyLeader"}
+    ]},
+    {"id":653,"card_id":10544110,"abilities":"FLAG_WARD", "effects": [
+      {"trigger":"TurnEnd","operation":"Damage","target":"RandomEnemyTwo","amount":8,"condition":"SelfUnevolved"},
+      {"trigger":"TurnEnd","operation":"Heal","target":"OwnLeader","amount":8,"condition":"SelfUnevolved"},
+      {"trigger":"TurnEnd","operation":"Damage","target":"EnemyLeader","amount":8,"condition":"SelfEvolved"},
+      {"trigger":"OnEvolve","operation":"RemoveAbilities","target":"Self","granted_abilities":"FLAG_WARD"},
+      {"trigger":"OnEvolve","operation":"Buff","target":"Self","granted_abilities":"kIntimidate"}
+    ]},
+    {"id":654,"card_id":10744120,"abilities":"FLAG_WARD", "effects": [
+      {"trigger":"OnPlay","operation":"Summon","amount":1,"card_id":90041120},
+      {"trigger":"OnPlay","operation":"GrantCrest","crest":"ElderDragon","target":"None"},
+      {"trigger":"OnSuperEvolve","operation":"ExtendCrest","crest":"ElderDragon","amount":2}
+    ]},
+    {"id":655,"card_id":11044110,"abilities":"FLAG_STORM", "effects": [
+      {"trigger":"OnPlay","operation":"Custom","handler":"LightOff"}
+    ]},
+    {"id":656,"card_id":10854110,"modes":2,"evolve_modes":true, "effects": [
+      {"trigger":"OnPlay","operation":"Damage","target":"EnemyLeader","amount":4,"mode":1},
+      {"trigger":"OnPlay","operation":"Heal","target":"OwnLeader","amount":4,"mode":1},
+      {"trigger":"OnPlay","operation":"Damage","target":"AllEnemyFollowers","amount":5,"mode":2},
+      {"trigger":"OnPlay","operation":"RestoreEp","amount":1,"mode":2},
+      {"trigger":"OnEvolve","operation":"Draw","amount":2,"mode":1},
+      {"trigger":"OnEvolve","operation":"RestorePp","amount":2,"mode":2}
+    ]},
+    {"id":657,"card_id":10954120,"modes":2,"hand_end_hp_discount_threshold":12, "effects": [
+      {"trigger":"OnPlay","operation":"Buff","target":"Self","granted_abilities":"FLAG_STORM","mode":1},
+      {"trigger":"OnPlay","operation":"Damage","target":"OwnLeader","amount":2,"mode":1},
+      {"trigger":"OnPlay","operation":"Buff","target":"Self","granted_abilities":"FLAG_WARD","mode":2},
+      {"trigger":"OnPlay","operation":"Damage","target":"AllEnemyFollowers","amount":8,"mode":2}
+    ]},
+    {"id":658,"card_id":10553110, "effects": [
+      {"trigger":"OnPlay","operation":"Transform","target":"AllOtherFollowers","card_id":90051110},
+      {"trigger":"OnFollowerDestroyed","operation":"Heal","target":"OwnLeader","amount":1,"card_id":90051110,"condition":"EventNamed"},
+      {"trigger":"OnEvolve","operation":"Damage","target":"AllOtherFollowers","amount":1}
+    ]},
+    {"id":659,"card_id":10654110,"abilities":"kAura","destroy_immune":true, "effects": [
+      {"trigger":"OnClash","operation":"Destroy","target":"ClashOpponent"},
+      {"trigger":"OnSuperEvolve","operation":"SetAttackLimit","target":"Self","amount":3}
+    ]},
+    {"id":660,"card_id":10754120, "effects": [
+      {"trigger":"OnPlay","operation":"Necromancy","amount":10},
+      {"trigger":"OnPlay","operation":"Summon","amount":3,"card_id":90051140,"condition":"CostPaid"},
+      {"trigger":"OnFollowerEntered","operation":"Buff","target":"EventFollower","condition":"OwnTurnDeadEntry","amount":1,"granted_abilities":["FLAG_RUSH","FLAG_WARD"]},
+      {"trigger":"OnFollowerEntered","operation":"Damage","target":"EnemyLeader","amount":1,"condition":"OwnTurnDeadEntry"}
+    ]},
+    {"id":661,"card_id":10554120, "effects": [
+      {"trigger":"OnPlay","operation":"ShuffleHandDraw"},
+      {"trigger":"OnPlay","operation":"Damage","target":"AllEnemyFollowersAndLeader","amount":4,"condition":"CostMultiplicity","threshold":4},
+      {"trigger":"OnPlay","operation":"ShuffleHandDraw"},
+      {"trigger":"OnPlay","operation":"Damage","target":"AllEnemyFollowersAndLeader","amount":4,"condition":"CostMultiplicity","threshold":4},
+      {"trigger":"OnSuperEvolve","operation":"ShuffleHandDraw"},
+      {"trigger":"OnSuperEvolve","operation":"Damage","target":"AllEnemyFollowersAndLeader","amount":4,"condition":"CostMultiplicity","threshold":4},
+      {"trigger":"OnSuperEvolve","operation":"ShuffleHandDraw"},
+      {"trigger":"OnSuperEvolve","operation":"Damage","target":"AllEnemyFollowersAndLeader","amount":4,"condition":"CostMultiplicity","threshold":4}
+    ]},
+    {"id":662,"card_id":10604110, "effects": [
+      {"trigger":"OnPlay","operation":"Custom","handler":"Omega"},
+      {"trigger":"OnSuperEvolve","operation":"Custom","handler":"Omega"}
+    ]},
+    {"id":663,"card_id":10804110,"modes":3, "effects": [
+      {"trigger":"OnPlay","operation":"Banish","target":"AllOtherFollowers","mode":1},
+      {"trigger":"OnPlay","operation":"Banish","target":"AllAmulets","mode":2},
+      {"trigger":"OnPlay","operation":"BanishCrests","mode":3}
+    ]},
+    {"id":664,"card_id":10804120,"abilities":"FLAG_WARD", "effects": [
+      {"trigger":"OnPlay","operation":"RestoreSep","amount":2}
+    ]},
+    {"id":665,"card_id":10904110,"abilities":"kIntimidate","direct_summon_cost_curve":true, "effects": [
+      {"trigger":"OnPlay","operation":"Damage","target":"ChosenEnemyFollower","amount":9}
+    ]},
+    {"id":666,"card_id":11004110, "effects": [
+      {"trigger":"OnPlay","operation":"Damage","target":"ChosenEnemyFollower","amount":9},
+      {"trigger":"OnSuperEvolve","operation":"GrantCrest","crest":"Rezeal","target":"None"}
+    ]},
+    {"id":667,"card_id":10774110,"abilities":["FLAG_STORM","FLAG_WARD"], "effects": [
+      {"trigger":"OnPlay","operation":"Damage","target":"AllEnemyFollowers","amount":0,"magnitude":"ArtifactTypes"}
+    ]},
+    {"id":668,"card_id":11073110,"abilities":"FLAG_WARD", "effects": [
+      {"trigger":"OnPlay","operation":"AddHand","amount":2,"card_id":90001210},
+      {"trigger":"OnAmuletFused","operation":"Destroy","target":"RandomEnemyFollower"},
+      {"trigger":"OnAmuletFused","operation":"Heal","target":"OwnLeader","amount":2}
+    ]},
+    {"id":669,"card_id":11074110,"fusion":"Amulet", "effects": [
+      {"trigger":"OnFuse","operation":"Summon","amount":1,"card_id":90001210},
+      {"trigger":"OnPlay","operation":"DestroyMatchingEnemy","target":"ChosenEnemyFollower"},
+      {"trigger":"OnPlay","operation":"HalveMaxHp","condition":"Fused"}
+    ]},
+    {"id":670,"card_id":10062120,"abilities":"FLAG_WARD", "effects": [
+      {"trigger":"OnAmuletAct","operation":"Buff","target":"Self","granted_abilities":"FLAG_STORM"}
+    ]},
+    {"id":671,"card_id":10562110,"abilities":"FLAG_WARD", "effects": [
+      {"trigger":"OnPlay","operation":"Summon","amount":3,"card_id":10562110}
+    ]},
+    {"id":672,"card_id":10762120,"abilities":"FLAG_STORM", "effects": [
+      {"trigger":"OnPlay","operation":"Banish","target":"ChosenEnemyFollower"},
+      {"trigger":"OnPlay","operation":"Heal","target":"OwnLeader","amount":3,"condition":"OwnAmulets","threshold":3}
+    ]},
+    {"id":673,"card_id":10764110, "effects": [
+      {"trigger":"OnPlay","operation":"Summon","amount":1,"card_id":90064210},
+      {"trigger":"OnEvolve","operation":"AddCountdown","target":"RandomOwnNamedPermanent","card_id":90064210,"amount":1}
+    ]},
+    {"id":674,"card_id":10862110,"abilities":["FLAG_WARD","kAura"], "effects": [
+      {"trigger":"LastWords","operation":"Summon","amount":1,"card_id":10862110,"effect_flags":"kLoseLastWords"},
+      {"trigger":"OnSuperEvolve","operation":"Destroy","target":"ChosenEnemyFollower"}
+    ]},
+    {"id":675,"card_id":10664120,"abilities":"FLAG_WARD","faith_id":10664122, "effects": [
+      {"trigger":"OnPlay","operation":"Destroy","target":"ChosenOtherThreePermanents"},
+      {"trigger":"TurnEnd","operation":"SpendFaith","amount":10},
+      {"trigger":"TurnEnd","operation":"AddHand","amount":1,"card_id":90064320,"condition":"CostPaid"}
+    ]},
+    {"id":676,"card_id":10021130,"abilities":"FLAG_STORM"},
+    {"id":677,"card_id":10622120,"abilities":"FLAG_STORM", "effects": [
+      {"trigger":"OnPlay","operation":"Destroy","target":"EnemyOneHpFollowers"}
+    ]},
+    {"id":678,"card_id":10824120,"abilities":["FLAG_STORM","kBane"], "effects": [
+      {"trigger":"OnPlay","operation":"Summon","amount":3,"card_id":90021110},
+      {"trigger":"OnFollowerEntered","operation":"Buff","target":"EventFollower","amount":2,"granted_abilities":"FLAG_RUSH","condition":"EventSoldier"},
+      {"trigger":"OnFollowerEntered","operation":"Buff","target":"Self","amount":1,"condition":"EventSoldier"},
+      {"trigger":"OnSuperEvolve","operation":"Summon","amount":1,"card_id":90021110}
+    ]},
+    {"id":679,"card_id":10524110, "effects": [
+      {"trigger":"TurnEnd","operation":"Damage","target":"AllEnemyFollowers","amount":7,"condition":"SelfUnevolved"},
+      {"trigger":"TurnEnd","operation":"Custom","handler":"Orluon","condition":"SelfEvolved"}
+    ]},
+    {"id":680,"card_id":11024110,"abilities":"FLAG_RUSH","hand_swap_on_evidence":true, "effects": [
+      {"trigger":"OnPlay","operation":"Custom","handler":"NoLife"}
+    ]},
+    {"id":681,"card_id":10822120,"abilities":"kIntimidate", "effects": [
+      {"trigger":"OnPlay","operation":"Damage","target":"AllEnemyFollowers","amount":6}
+    ]},
+    {"id":682,"card_id":10924120,"abilities":["FLAG_STORM","kBane","FLAG_WARD","kAura"],"attack_limit":3},
+    {"id":683,"card_id":90034330,"deck_eligible":false, "effects": [
+      {"trigger":"OnPlay","operation":"Custom","handler":"AbyssCrystal","card_id":10631110,"alternate_card_id":10634122}
+    ]},
+    {"id":684,"card_id":90064210,"deck_eligible":false,"countdown":1,"abilities":"kAura", "effects": [
+      {"trigger":"TurnEnd","operation":"Damage","target":"AllEnemyFollowersAndLeader","amount":3,"condition":"OwnAmulets","threshold":3}
+    ]},
+    {"id":685,"card_id":90064320,"deck_eligible":false, "effects": [
+      {"trigger":"OnPlay","operation":"Custom","handler":"AbyssBook","target":"ChosenOtherPermanent"}
+    ]},
+    {"id":686,"card_id":10634122,"name":"旧き天晶・カルギデンスラ","kind":"Faith","cost":0,"deck_eligible":false,"class_name":"ウィッチ","faith_trigger":"OnFollowerEntered","faith_event_card_id":10631110},
+    {"id":687,"card_id":10664122,"name":"旧き天書・リアントース","kind":"Faith","cost":0,"deck_eligible":false,"class_name":"ビショップ","faith_trigger":"OnAmuletDestroyed"}
+  ],
+  "crests": [
+    {"id":"BurnedKnight","special_effect_id":10744112,"clock":"Start","effects":[{"trigger":"TurnStart","operation":"Damage","target":"OwnLeader","amount":2},{"trigger":"OnLeaderHeal","operation":"Custom","handler":"BurnedHeal"}]},
+    {"id":"ElderDragon","special_effect_id":10744122,"clock":"Start","effects":[{"trigger":"TurnEnd","operation":"Summon","amount":1,"card_id":90041120}]},
+    {"id":"Rezeal","special_effect_id":11004112,"clock":"Start","effects":[{"trigger":"OnPlayedFollower","operation":"LastWordsFlags","target":"EventFollower","effect_flags":"kRebirthLastWords"},{"trigger":"OnPlayedFollower","operation":"TemporaryAbilities","target":"EventFollower","granted_abilities":"kAttackBlocked"}]}
+  ]
+}

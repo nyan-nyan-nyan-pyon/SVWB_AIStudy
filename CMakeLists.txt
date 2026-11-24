@@ -39,6 +39,7 @@ add_custom_command(OUTPUT "${SVWB_GENERATED_CARDS}"
             data/cards/phase5b2_cards.json
             data/cards/phase5b3_cards.json
             data/cards/phase5b4_cards.json
+            data/cards/rotation_high_cost_cards.json
     VERBATIM)
 add_library(svwb_rules STATIC cpp/src/wb_cards.cpp cpp/src/wb_rules.cpp "${SVWB_GENERATED_CARDS}")
 target_include_directories(svwb_rules PUBLIC cpp/include)
@@ -100,7 +101,8 @@ if(BUILD_TESTING)
     add_test(NAME wb_witch_nemesis_126_unit COMMAND test_wb --witch-nemesis-unit)
     add_test(NAME wb_witch_neutral_random_5000 COMMAND test_wb --witch-stress)
     add_test(NAME wb_nemesis_neutral_random_5000 COMMAND test_wb --nemesis-stress)
-    add_test(NAME wb_rotation_registry_469 COMMAND test_wb --rotation-registry)
+    add_test(NAME wb_rotation_registry_516 COMMAND test_wb --rotation-registry)
+    add_test(NAME wb_rotation_high_cost_47_unit COMMAND test_wb --high-cost-unit)
     add_test(NAME wb_full_rotation_random_10000 COMMAND test_wb --full-rotation-stress)
     add_test(NAME wb_actor_observation_audit COMMAND test_wb --actor-audit)
     add_test(NAME wb_search_canonicalization COMMAND test_wb --canonicalization)
@@ -126,7 +128,7 @@ if(BUILD_TESTING)
         set_tests_properties(wb_play_json_lines PROPERTIES TIMEOUT 60)
         add_test(NAME wb_deck_portal_import COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/cpp/tests/check_deck_import.py"
-            --stress-cli "$<TARGET_FILE:test_wb>" --play-cli "$<TARGET_FILE:svwb_play_cli>")
+            --stress-cli "$<TARGET_FILE:test_wb>" --play-cli "$<TARGET_FILE:svwb_play_cli>" --match-cli "$<TARGET_FILE:svwb_ai>")
         set_tests_properties(wb_deck_portal_import PROPERTIES TIMEOUT 60)
     endif()
 endif()

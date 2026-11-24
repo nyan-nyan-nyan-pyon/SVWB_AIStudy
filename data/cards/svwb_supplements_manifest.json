@@ -1,17 +1,18 @@
 {
   "metadata": {
     "as_of": "2026-11-23",
-    "input_card_count": 469,
+    "input_card_count": 516,
     "unresolved_reference_count": 54,
     "missing_900xxxxx_count": 54,
-    "crest_name_count": 34,
+    "crest_name_count": 37,
     "verified_crest_example_count": 4,
     "verified_form_example_count": 1,
     "official_endpoint_tested_in_this_environment": false,
     "notes": [
       "クレスト4種と結晶1種は公式APIからではなく外部カード情報ページから内容を照合したもの。",
       "related_card_ids は必ずしもトークンだけを示すとは限らない。ここでは元のカード配列にないIDのみ抽出。",
-      "未取得の効果や未発見の結晶・アクセラレートは空欄のまま。シミュレーター完成データではない。"
+      "未取得の効果や未発見の結晶・アクセラレートは空欄のまま。シミュレーター完成データではない。",
+      "2026-11-24、補完した台帳からのトークン3件とクレスト3件を公式APIで確認。"
     ]
   },
   "tokens": [
@@ -305,6 +306,34 @@
       "definition": null
     },
     {
+      "card_id": 90034330,
+      "source_card_ids": [
+        10634120
+      ],
+      "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90034330",
+      "status": "resolved",
+      "definition": {
+        "card_id": 90034330,
+        "name": "天晶の深淵",
+        "class": "ウィッチ",
+        "type": "スペル",
+        "cost": 6,
+        "attack": 0,
+        "defense": 0,
+        "traits": [
+          "アサイラント"
+        ],
+        "text": "『天晶の魔手』1枚を自分の場に出す。それは+X/+Xする。自分のリーダーをY回復。相手のリーダーにZダメージ。X/Y/Zは合計が信仰値になるようにランダムに決まる。",
+        "evolved_text": "",
+        "rotation": false,
+        "token": true,
+        "related_card_ids": [
+          10631110
+        ],
+        "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90034330"
+      }
+    },
+    {
       "card_id": 90034340,
       "source_card_ids": [
         10834110
@@ -471,6 +500,60 @@
       "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90061140",
       "status": "unresolved",
       "definition": null
+    },
+    {
+      "card_id": 90064210,
+      "source_card_ids": [
+        10764110
+      ],
+      "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90064210",
+      "status": "resolved",
+      "definition": {
+        "card_id": 90064210,
+        "name": "月影の指輪",
+        "class": "ビショップ",
+        "type": "アミュレット",
+        "cost": 8,
+        "attack": 0,
+        "defense": 0,
+        "traits": [
+          "アナテマ"
+        ],
+        "text": "【カウントダウン_1】\n【オーラ】\n自分のターン終了時、自分の場のアミュレットの枚数が3以上なら、相手の場のフォロワーすべてと相手のリーダーに3ダメージ。",
+        "evolved_text": "",
+        "rotation": false,
+        "token": true,
+        "related_card_ids": [],
+        "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90064210"
+      }
+    },
+    {
+      "card_id": 90064320,
+      "source_card_ids": [
+        10664120
+      ],
+      "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90064320",
+      "status": "resolved",
+      "definition": {
+        "card_id": 90064320,
+        "name": "天書の深淵",
+        "class": "ビショップ",
+        "type": "スペル",
+        "cost": 1,
+        "attack": 0,
+        "defense": 0,
+        "traits": [
+          "アサイラント"
+        ],
+        "text": "場のカード1枚を選ぶ。それを破壊。自分のアミュレットを選んだなら、相手のリーダーに2ダメージ。『天書の深淵』1枚を自分の手札に加える。",
+        "evolved_text": "",
+        "rotation": false,
+        "token": true,
+        "related_card_ids": [
+          90064320
+        ],
+        "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=90064320"
+      }
     },
     {
       "card_id": 90071110,
@@ -1006,6 +1089,36 @@
       "countdown": null,
       "status": "unresolved",
       "source_url": null
+    },
+    {
+      "name": "焦灰のアナテマ・バーンドナイト",
+      "source_card_ids": [
+        10744110
+      ],
+      "effect_text": "自分のターン開始時、自分のリーダーに2ダメージ。\n自分のリーダーが回復したとき、自分のターンごとに1回、自分のリーダーに1ダメージ。",
+      "countdown": null,
+      "status": "verified_official",
+      "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=10744110"
+    },
+    {
+      "name": "龍谷のエルダードラゴン",
+      "source_card_ids": [
+        10744120
+      ],
+      "effect_text": "【カウントダウン_2】\n自分のターン終了時、『大翼のドラゴン』1枚を自分の場に出す。",
+      "countdown": 2,
+      "status": "verified_official",
+      "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=10744120"
+    },
+    {
+      "name": "理想郷の神・レゼアル",
+      "source_card_ids": [
+        11004110
+      ],
+      "effect_text": "自分がフォロワーをプレイしたとき、それは「【ラストワード】これと同名のカード1枚を自分の場に出す。」を持つ。ターン終了まで、それは「フォロワーやリーダーを攻撃できない。」を持つ。",
+      "countdown": null,
+      "status": "verified_official",
+      "source_url": "https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=11004110"
     }
   ],
   "forms": [

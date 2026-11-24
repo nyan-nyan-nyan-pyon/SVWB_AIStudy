@@ -46,6 +46,7 @@ enum class Trigger : std::uint8_t {
     OnFollowerEntered, OnEnemyFollowerEntered, OnAllyEvolved, OnBuffed, OnEnhanced,
     OnDiscard, OnOwnBanish, OnAlliedAttack, OnPlayedFollower,
     OnAmuletAct, OnAnyFusion, OnAmuletFused, OnPlayedSpell,
+    OnFollowerDestroyed,
 };
 enum class Operation : std::uint8_t {
     Damage, Heal, Draw, AddHand, Summon, SummonModified, SummonEvolved, ReduceCountdown, SpendClue,
@@ -57,6 +58,7 @@ enum class Operation : std::uint8_t {
     AddShadows, TemporaryAttack, LastWordsFlags, TransformNamed, ShuffleIntoDeck, DiscardEvidence, DiscountNightmareHand,
     Spellboost, BuffHand, DrawEnemy, DestroyCrest, ReduceCrest, ReduceMaxHp, ShuffleHandDraw,
     AddHandModified, ApplyTemporaryHandCost, PayFusionPp,
+    RestoreSep, SetAttackLimit, BanishCrests, HalveMaxHp, SpendFaith, DestroyMatchingEnemy,
 };
 enum class Target : std::uint8_t {
     None, Self, OwnLeader, EnemyLeader, ChosenEnemyFollower, ChosenEnemyPermanent, AllEnemyFollowers,
@@ -74,6 +76,7 @@ enum class Target : std::uint8_t {
     ChosenOwnNamedFollower, ChosenOwnGolem, ChosenOtherUnevolvedOwnFollower, ChosenOwnLargeFollower,
     ChosenBoostedHand, ChosenAffordableArtifactHand, RandomEnemyThree, RandomEnemyTwoWard,
     AllHandFollowers, AllManariaSpellsInHand, AllHand, RandomOwnLargeUnevolved, AllOwnNamedFollowers,
+    AllAmulets, ChosenOtherThreePermanents, EnemyOneHpFollowers, RandomOwnNamedPermanent, ChosenOtherFollower,
 };
 enum class Condition : std::uint8_t {
     Always, Combo, Rally, Overflow, CostPaid, AtMaxPp, Fused, NotFused, OwnTurn, OwnAmulets,
@@ -85,6 +88,7 @@ enum class Condition : std::uint8_t {
     EventMarine, EventDead, EventNightmare, EventNamed, HasChosen, CostMultiplicity, SelfSuper,
     BoostAtLeast, ActedAmulet, EnteredSame, EventGolem, EventArtifact, EventPuppet, EventLarge, EventManaria, EventEvolvedSpell,
     AtLeastArtifacts, BelowArtifacts, NoDeckDuplicates, HasDeckDuplicates, OwnLargeFollower,
+    EventSoldier, OwnTurnDeadEntry,
 };
 enum class CardHandler : std::uint8_t {
     None, EvolveWithAlly, BanishLowestAndEvolve, MatchPlayedCost, SequenceCity, SequenceOmerio,
@@ -98,6 +102,7 @@ enum class CardHandler : std::uint8_t {
     DestroyLastWordsPair, YubeAttack, ChainDamage, DrawSuperDiscounted,
     KittyTrick, TransformBoardFromDeck, NoinSequence, OnceCrest, SlothRandom,
     AddFromDestroyed, DrawDistinctOneCostSpells, CopyHandToBoard, GiveRandomPuppetAbility, GiveChosenDiscounted,
+    DrawToBoard, LightOff, Omega, Orluon, NoLife, AbyssCrystal, AbyssBook, BurnedHeal,
 };
 enum class FusionMaterial : std::uint8_t { None, Any, Follower, Spell, Amulet, SameClass, Trait, AmuletTrait, NamedPair };
 enum class FusionRecipe : std::uint8_t { None, Fixed, ByCost, DistinctPair };
@@ -107,7 +112,7 @@ enum class DeckFilter : std::uint8_t {
 };
 enum class Magnitude : std::uint8_t {
     Fixed, SourceAttack, NegativeSourceAttack, Combo, OwnFollowers, AllFollowerCount, EffectiveCost, EnemyMissingHp, Evidence,
-    ArtifactTypes, OwnOtherFollowers, OwnLargeFollowers,
+    ArtifactTypes, OwnOtherFollowers, OwnLargeFollowers, EarthSigils,
 };
 
 struct Effect {
@@ -190,6 +195,14 @@ struct CardDef {
     std::array<CardId, 3> fusion_results{};
     std::array<CardId, 2> fusion_materials{};
     int fusion_trigger_pp = 0;
+    int attack_limit = 0;
+    int damage_cap = 0;
+    bool destroy_immune = false;
+    bool direct_summon_cost_curve = false;
+    int hand_play_discount = 0;
+    int hand_end_hp_discount_threshold = 0;
+    CardId faith_event_card = 0;
+    CardId hand_discount_entry_card = 0;
 };
 
 struct CrestDef {
@@ -209,6 +222,7 @@ struct CrestDef {
 [[nodiscard]] Deck read_deck(const std::filesystem::path& path);
 [[nodiscard]] int card_cost(const CardDef& card, CardModifiers modifiers);
 [[nodiscard]] int enhance_payment(const CardDef& card, int pp);
+[[nodiscard]] std::span<const CardId> high_cost_rotation();
 [[nodiscard]] std::span<const CardId> neutral_bishop_rotation();
 [[nodiscard]] std::span<const CardId> elf_rotation();
 [[nodiscard]] std::span<const CardId> royal_rotation();

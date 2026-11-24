@@ -1,0 +1,73 @@
+{
+  "name": "ナイトメア",
+  "class": "ナイトメア",
+  "class_id": 5,
+  "format_version": 1,
+  "source_hash": "1.5.cM8E.cM8E.cM8E.eFzG.eFzG.f0oG.f0oG.f11k.f11k.f11k.f1KU.f1KU.f1KU.f1W-.f1W-.f1W-.f1X8.f1X8.f1X8.fPxU.fPxe.fndG.fndG.fndG.fnsk.fnsk.fnsk.foL-.foL-.foL-.foM8.foM8.foM8.f-3-.f-3-.gAmU.gAmU.gAme.gAme.gAme",
+  "cards": [
+    {
+      "card_id": 10052110,
+      "copies": 3
+    },
+    {
+      "card_id": 10551120,
+      "copies": 2
+    },
+    {
+      "card_id": 10751120,
+      "copies": 2
+    },
+    {
+      "card_id": 10752110,
+      "copies": 3
+    },
+    {
+      "card_id": 10753310,
+      "copies": 3
+    },
+    {
+      "card_id": 10754110,
+      "copies": 3
+    },
+    {
+      "card_id": 10754120,
+      "copies": 3
+    },
+    {
+      "card_id": 10854110,
+      "copies": 1
+    },
+    {
+      "card_id": 10854120,
+      "copies": 1
+    },
+    {
+      "card_id": 10951120,
+      "copies": 3
+    },
+    {
+      "card_id": 10952110,
+      "copies": 3
+    },
+    {
+      "card_id": 10954110,
+      "copies": 3
+    },
+    {
+      "card_id": 10954120,
+      "copies": 3
+    },
+    {
+      "card_id": 11002110,
+      "copies": 2
+    },
+    {
+      "card_id": 11054110,
+      "copies": 2
+    },
+    {
+      "card_id": 11054120,
+      "copies": 3
+    }
+  ]
+}

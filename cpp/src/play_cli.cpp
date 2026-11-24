@@ -250,23 +250,28 @@ Object describe_action(const GameState& state, Action action, std::optional<Enti
         }
     }
     if (action.selection && !(public_before && action.type == ActionType::Play)) {
+        const bool both_boards = (action.selection & kBothBoardsSelection) != 0;
         const bool hand = !action.selection_on_enemy && (action.selection_in_hand || action.type != ActionType::Play);
-        const auto& board_side = action.selection_on_enemy ? state.players[1 - seat] : player;
         Array slots;
         label += " → ";
         if (hand && public_before) {
             label += "非公開の手札 " + std::to_string(std::popcount(action.selection)) + "枚";
         } else {
-            for (int slot = 0; slot < (hand ? player.hand_count : board_side.board_count); ++slot) {
-                if (!(action.selection & (1 << slot))) continue;
-                if (!slots.empty()) label += " ＋ ";
-                const auto id = hand ? player.hand[slot] : board_side.board[slot].card_id;
-                label += find_card(id)->name;
-                label += std::string(hand ? "（手札 " : "（場 ") + std::to_string(slot + 1) + "）";
-                slots.emplace_back(slot);
+            for (int row = 0; row < (both_boards ? 2 : 1); ++row) {
+                const bool opposing = action.selection_on_enemy || row == 1;
+                const auto& side = state.players[opposing ? 1 - seat : seat];
+                for (int slot = 0; slot < (hand ? player.hand_count : side.board_count); ++slot) {
+                    if (!(action.selection & (1 << (row * kBoardLimit + slot)))) continue;
+                    if (!slots.empty()) label += " ＋ ";
+                    const auto id = hand ? player.hand[slot] : side.board[slot].card_id;
+                    label += find_card(id)->name;
+                    const auto location = hand ? "（手札 " : opposing ? "（相手の場 " : "（自分の場 ";
+                    label += std::string(location) + std::to_string(slot + 1) + "）";
+                    slots.emplace_back(both_boards ? Json(Object{{"side", opposing ? "enemy" : "own"}, {"slot", slot}}) : Json(slot));
+                }
             }
         }
-        result["target_kind"] = hand ? "hand" : action.selection_on_enemy ? "board" : "own_board";
+        result["target_kind"] = both_boards ? "boards" : hand ? "hand" : action.selection_on_enemy ? "board" : "own_board";
         result["target_slots"] = std::move(slots);
     }
     if (action.secondary_slot >= 0) {
@@ -326,6 +331,7 @@ Object player_json(const GameState& state, int seat, bool show_hand, const Actio
             {"attacked_this_turn", object.attacked_this_turn}, {"acted_this_turn", object.acted_this_turn},
             {"countdown", card.countdown > 0 ? Json(object.countdown) : Json{}}, {"clue_count", object.clue_count},
             {"earth_count", object.earth_count}, {"double_attack", (object.abilities & kDoubleStrike) != 0},
+            {"triple_attack", object.attack_limit == 3},
             {"act_cost", card.act_cost >= 0 ? Json(card.act_cost) : Json{}},
         });
     }

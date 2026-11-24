@@ -1,0 +1,73 @@
+{
+  "name": "ネメシス",
+  "class": "ネメシス",
+  "class_id": 7,
+  "format_version": 1,
+  "source_hash": "1.7.cR2I.cR2I.cR2I.ej_8.er5g.er5g.er5g.fDkE.fUp-.ftEe.ftEe.ftEe.fzqM.fzqM.fzqM.f-3-.f-3-.f-LA.f-LA.f-LA.gEw6.gEw6.gEw6.gF9k.gF9k.gF9k.gFCs.gFCs.gFPM.gFPM.gFPM.gFSU.gFSU.gFSU.gFe-.gFe-.gFe-.gFf8.gFf8.gFf8",
+  "cards": [
+    {
+      "card_id": 10072210,
+      "copies": 3
+    },
+    {
+      "card_id": 10674120,
+      "copies": 1
+    },
+    {
+      "card_id": 10703210,
+      "copies": 3
+    },
+    {
+      "card_id": 10804110,
+      "copies": 1
+    },
+    {
+      "card_id": 10874110,
+      "copies": 1
+    },
+    {
+      "card_id": 10974120,
+      "copies": 3
+    },
+    {
+      "card_id": 11001110,
+      "copies": 3
+    },
+    {
+      "card_id": 11002110,
+      "copies": 2
+    },
+    {
+      "card_id": 11003210,
+      "copies": 3
+    },
+    {
+      "card_id": 11071110,
+      "copies": 3
+    },
+    {
+      "card_id": 11072110,
+      "copies": 3
+    },
+    {
+      "card_id": 11072310,
+      "copies": 2
+    },
+    {
+      "card_id": 11073110,
+      "copies": 3
+    },
+    {
+      "card_id": 11073310,
+      "copies": 3
+    },
+    {
+      "card_id": 11074110,
+      "copies": 3
+    },
+    {
+      "card_id": 11074120,
+      "copies": 3
+    }
+  ]
+}

@@ -42,12 +42,13 @@ def decode_card(token):
 
 def import_deck(source, catalog_path=CATALOG, name=None):
     deck_hash = read_hash(source)
-    parts = deck_hash.split(".")
-    if len(parts) < 2 or not re.fullmatch(r"[0-9]+", parts[0]) or not re.fullmatch(r"[1-7]", parts[1]):
+    header = deck_hash.split(".", 2)
+    if len(header) != 3 or not re.fullmatch(r"[0-9]+", header[0]) or not re.fullmatch(r"[1-7]", header[1]):
         raise ValueError("Expected a numeric format/version followed by a class ID from 1 through 7")
-    version, class_id = map(int, parts[:2])
+    version_field, class_field, encoded_cards = header
+    version, class_id = int(version_field), int(class_field)
     class_name = CLASSES[class_id]
-    ids = [decode_card(token) for token in parts[2:]]
+    ids = [decode_card(token) for token in encoded_cards.split(".")]
     copies = Counter(ids)
     catalog = {
         card["card_id"]: card for card in json.loads(catalog_path.read_text(encoding="utf-8-sig"))

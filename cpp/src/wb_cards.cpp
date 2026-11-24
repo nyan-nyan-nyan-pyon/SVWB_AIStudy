@@ -69,6 +69,10 @@ std::span<const CardId> all_rotation() {
     return rotation_all;
 }
 
+std::span<const CardId> high_cost_rotation() {
+    return rotation_high_cost;
+}
+
 bool is_deck_card(CardId id) {
     const auto* card = find_card(id);
     return card && card->implemented && card->deck_eligible;

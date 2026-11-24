@@ -218,18 +218,23 @@ GameState actions_json(std::ostream& out, const GameState& initial, std::span<co
             out << '}';
         }
         if (action.selection) {
+            const bool both_boards = (action.selection & kBothBoardsSelection) != 0;
             const bool hand = !action.selection_on_enemy && (action.selection_in_hand || action.type != ActionType::Play);
-            const int target_seat = action.selection_on_enemy ? enemy : before.turn_player;
-            const auto& board_side = before.players[target_seat];
             out << ",\"targets\":[";
             bool separate = false;
-            for (int slot = 0; slot < (hand ? player.hand_count : board_side.board_count); ++slot) {
-                if (!(action.selection & (1 << slot))) continue;
-                out << (separate ? ",{" : "{") << "\"kind\":\"" << (hand ? "hand" : "follower")
-                    << "\",\"seat\":" << 1 + target_seat << ",\"slot\":" << slot + 1 << ',';
-                card_fields(out, hand ? player.hand[slot] : board_side.board[slot].card_id);
-                out << '}';
-                separate = true;
+            for (int row = 0; row < (both_boards ? 2 : 1); ++row) {
+                const int target_seat = action.selection_on_enemy || row == 1 ? enemy : before.turn_player;
+                const auto& side = before.players[target_seat];
+                for (int slot = 0; slot < (hand ? player.hand_count : side.board_count); ++slot) {
+                    if (!(action.selection & (1 << (row * kBoardLimit + slot)))) continue;
+                    const auto card = hand ? player.hand[slot] : side.board[slot].card_id;
+                    const auto kind = hand ? "hand" : find_card(card)->kind == Kind::Follower ? "follower" : "amulet";
+                    out << (separate ? ",{" : "{") << "\"kind\":\"" << kind
+                        << "\",\"seat\":" << 1 + target_seat << ",\"slot\":" << slot + 1 << ',';
+                    card_fields(out, card);
+                    out << '}';
+                    separate = true;
+                }
             }
             out << ']';
         }

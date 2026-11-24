@@ -1,0 +1,69 @@
+{
+  "name": "ロイヤル",
+  "class": "ロイヤル",
+  "class_id": 2,
+  "format_version": 1,
+  "source_hash": "1.2.cEZs.cEZs.cEZs.eXnk.eXnk.eXnk.eXnu.eXnu.evi-.evi-.evi-.evyc.ewCE.ewCE.ewCE.ewCO.ewCO.ewCO.fIck.fIck.fIck.fIcu.fIcu.f-LA.f-LA.g2is.g2is.g2is.g2yU.g2yU.g2yU.g3C6.g3C6.g3C6.g3FE.g3FE.g3FE.g3Rk.g3Rk.g3Rk",
+  "cards": [
+    {
+      "card_id": 10021110,
+      "copies": 3
+    },
+    {
+      "card_id": 10624110,
+      "copies": 3
+    },
+    {
+      "card_id": 10624120,
+      "copies": 2
+    },
+    {
+      "card_id": 10722110,
+      "copies": 3
+    },
+    {
+      "card_id": 10723110,
+      "copies": 1
+    },
+    {
+      "card_id": 10724110,
+      "copies": 3
+    },
+    {
+      "card_id": 10724120,
+      "copies": 3
+    },
+    {
+      "card_id": 10824110,
+      "copies": 3
+    },
+    {
+      "card_id": 10824120,
+      "copies": 2
+    },
+    {
+      "card_id": 11003210,
+      "copies": 2
+    },
+    {
+      "card_id": 11021110,
+      "copies": 3
+    },
+    {
+      "card_id": 11022110,
+      "copies": 3
+    },
+    {
+      "card_id": 11023110,
+      "copies": 3
+    },
+    {
+      "card_id": 11023310,
+      "copies": 3
+    },
+    {
+      "card_id": 11024110,
+      "copies": 3
+    }
+  ]
+}

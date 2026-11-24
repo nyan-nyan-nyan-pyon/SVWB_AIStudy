@@ -17,6 +17,7 @@ using EntityId = std::uint32_t;
 inline constexpr int kOwnBoardTarget = kBoardLimit;
 inline constexpr int kOwnHandTarget = 2 * kBoardLimit;
 inline constexpr EntityId kHandTargetFlag = EntityId{1} << 31;
+inline constexpr std::uint16_t kBothBoardsSelection = 1 << 15;
 
 enum class MulliganReturn : std::uint8_t { Shuffle, Bottom };
 enum class CrestClock : std::uint8_t { Printed, Start, End };
@@ -51,6 +52,9 @@ struct RuleConfig {
     bool refusion_after_hand_transform = true;
     bool fusion_requires_trigger_pp = false;
     bool highlander_counts_card_names = true;
+    bool round_half_max_hp_up = false;
+    bool burn_crest_heal_on_enemy_turn = false;
+    std::uint8_t fanfare_repeat_limit = 64;
 };
 
 enum class Evolution : std::uint8_t { None, Normal, Super };
@@ -62,6 +66,7 @@ enum class CrestId : std::uint8_t {
     Shrink, Expand, Dustdays, DeerKing, Beasts, Unkei, March, Gildaria, Almerize,
     Yube, Wadatsumi, Reflection, Okuyoka, Miltio, IstenDead, Gremory,
     Insomnia, Lincle, Shim, Tico, Sephie, NoinInterrogation, Noin, Lala, Sloth, Cutthroat, Stranger,
+    BurnedKnight, ElderDragon, Rezeal,
 };
 
 // Supplemental ability flags used by the extended combat and target rules.
@@ -118,6 +123,8 @@ struct Permanent {
     bool banish_at_end;
     std::uint8_t last_trigger_ply;
     std::int16_t temporary_attack;
+    bool attacked_thrice;
+    std::uint8_t attack_limit;
 
     bool operator==(const Permanent&) const = default;
 };
@@ -127,6 +134,7 @@ struct Crest {
     CrestId id;
     std::uint8_t countdown;
     std::uint8_t sequence;
+    std::uint8_t last_trigger_round;
 
     bool operator==(const Crest&) const = default;
 };
@@ -263,8 +271,9 @@ void apply_legal_action(GameState& state, Action action, const RuleConfig& rules
 [[nodiscard]] bool can_choose_enemy_permanent(const Permanent& object);
 [[nodiscard]] bool follower_fanfare_suppressed(const PlayerState& player);
 [[nodiscard]] inline bool attack_ready(const Permanent& object) {
-    const bool twice = (object.abilities & kDoubleStrike) != 0;
-    return !object.attacked_twice && (!object.attacked_this_turn || twice) &&
+    const int limit = object.attack_limit >= 3 ? object.attack_limit : 1 + ((object.abilities & kDoubleStrike) != 0);
+    return !object.attacked_thrice && (!object.attacked_twice || limit == 3) &&
+        (!object.attacked_this_turn || limit >= 2) &&
         (object.abilities & kAttackBlocked) == 0 &&
         (object.readied || (object.abilities & (FLAG_RUSH | FLAG_STORM)) != 0);
 }

@@ -356,6 +356,7 @@ ChoiceTarget chosen_target(const CardDef& card, const PlayerState& player, Trigg
         case Target::ChosenEnemyTwoFollowers: case Target::ChosenHandAndEnemy: case Target::ChosenOwnHandFollower:
         case Target::ChosenOwnNamedFollower: case Target::ChosenOwnGolem: case Target::ChosenOtherUnevolvedOwnFollower:
         case Target::ChosenOwnLargeFollower: case Target::ChosenBoostedHand: case Target::ChosenAffordableArtifactHand:
+        case Target::ChosenOtherThreePermanents: case Target::ChosenOtherFollower:
             return {effect.target, effect.card};
         default: break;
         }
@@ -368,7 +369,7 @@ bool can_attack_target(const Permanent& object) {
 }
 
 enum class Origin : std::uint8_t {
-    Board, Spell, Removed, Crest, ExpiredCrest, SuperDamage, Banished, DelayedBanish, Faith, Rebirth,
+    Board, Spell, Removed, Crest, ExpiredCrest, SuperDamage, Banished, DelayedBanish, Faith, Rebirth, DirectSummon,
 };
 
 struct Ability {
@@ -467,8 +468,9 @@ bool condition_met(GameState& state, const Effect& effect, const Ability& abilit
     case Condition::OwnHpAtMost: return player.leader_hp <= effect.threshold;
     case Condition::OwnHpAhead: return player.leader_hp > state.players[1 - owner].leader_hp;
     case Condition::EventMarine: return ability.event_card && has_trait(definition(ability.event_card), kMarineTrait);
-    case Condition::EventDead:
-        return ability.event_card && ((ability.event_object.modifiers.effect_flags & kDeadTrait) ||
+    case Condition::EventDead: case Condition::OwnTurnDeadEntry:
+        return (effect.condition == Condition::EventDead || owner == state.turn_player) &&
+             ability.event_card && ((ability.event_object.modifiers.effect_flags & kDeadTrait) ||
              has_trait(definition(ability.event_card), kDeadName));
     case Condition::EventNightmare: return ability.event_card && definition(ability.event_card).class_name == kNightmareClass;
     case Condition::EventNamed: return ability.event_card == effect.card;
@@ -484,6 +486,7 @@ bool condition_met(GameState& state, const Effect& effect, const Ability& abilit
     case Condition::EventGolem: return ability.event_card && has_trait(definition(ability.event_card), kGolemTrait);
     case Condition::EventArtifact: return ability.event_card && has_trait(definition(ability.event_card), kArtifactTrait);
     case Condition::EventPuppet: return ability.event_card && has_trait(definition(ability.event_card), kPuppetTrait);
+    case Condition::EventSoldier: return ability.event_card && has_trait(definition(ability.event_card), "兵士");
     case Condition::EventLarge: return ability.event_card && is_large_follower(definition(ability.event_card));
     case Condition::EventManaria:
         return ability.event_card && has_trait(definition(ability.event_card), kManariaTrait);
@@ -553,19 +556,20 @@ private:
     void board_ability(Ref ref, Trigger trigger, EntityId chosen = 0, int mode = 0, std::uint16_t selection = 0,
                        int effective_cost = 0, int enhanced = 0);
     void broadcast(int seat, const Ability& event, bool board = true, bool crests = true);
-    void progress_faith(int seat, Trigger trigger);
+    void progress_faith(int seat, Trigger trigger, CardId event_card = 0);
     void flush();
     void resolve();
     void run_steps(const Ability& ability, std::span<const Effect> effects);
     void check_health(int source);
     void settle(Ref cause);
     bool protected_super(Ref ref, const Permanent& object) const;
+    bool protected_destruction(Ref ref, const Permanent& object) const;
     void damage(Ref target, int amount);
     int damage_leader(int seat, int amount);
     void heal_leader(int seat, int amount);
     void destroy(Ref target, Ref cause, bool by_ability, std::vector<Ability>* deferred = nullptr);
     void banish(Ref target);
-    void copy_board(int owner, Permanent copy);
+    Ref copy_board(int owner, Permanent copy);
     void collect_dead(Ref cause);
     void evolve(Ref ref, Evolution evolution, bool manual, EntityId chosen = 0, std::uint16_t selection = 0, int mode = 0);
     void transform(Ref ref, CardId card, CardModifiers modifiers, Evolution evolution);
@@ -583,6 +587,7 @@ private:
     void destroy_crest(int seat, EntityId order, bool expired);
     void tick_crests(int seat, CrestClock clock);
     void refresh(int seat);
+    void direct_summon(int seat);
 
     GameState& state_;
     const RuleConfig& rules_;
@@ -592,6 +597,7 @@ private:
     std::vector<Ability> triggered_;
     Ref super_attacker_{};
     bool super_damage_queued_ = false;
+    unsigned fanfare_repeats_ = 0;
 };
 
 void Resolver::enqueue(Ability ability) {
@@ -614,12 +620,13 @@ void Resolver::board_ability(Ref ref, Trigger trigger, EntityId chosen, int mode
     }
 }
 
-void Resolver::progress_faith(int seat, Trigger trigger) {
+void Resolver::progress_faith(int seat, Trigger trigger, CardId event_card) {
     auto& player = state_.players[seat];
     for (int i = 0; i < player.faith_count; ++i) {
         const auto card = player.faiths[i];
-        if (definition(card).faith_trigger != trigger) continue;
-        ++player.faith_values[i];
+        const auto& def = definition(card);
+        if (def.faith_trigger != trigger || (def.faith_event_card && def.faith_event_card != event_card)) continue;
+        if (player.faith_values[i] < std::numeric_limits<std::uint16_t>::max()) ++player.faith_values[i];
         for (int upgrade = 0; upgrade < player.faith_upgrades[i]; ++upgrade) {
             enqueue({trigger, Origin::Faith, {seat}, card});
         }
@@ -652,6 +659,7 @@ void Resolver::broadcast(int seat, const Ability& event, bool board, bool crests
 
 void Resolver::flush() {
     const auto priority = [&](const Ability& ability) {
+        if (ability.origin == Origin::DirectSummon) return Priority::Deck;
         if (ability.trigger == OnPlay || ability.trigger == OnEvolve ||
             ability.trigger == OnSuperEvolve || ability.trigger == OnAct || ability.trigger == OnFuse) {
             return Priority::Manual;
@@ -709,6 +717,11 @@ bool Resolver::protected_super(Ref ref, const Permanent& object) const {
         (!object.silenced || !rules_.silence_removes_super_abilities);
 }
 
+bool Resolver::protected_destruction(Ref ref, const Permanent& object) const {
+    return object.earth_count > 0 || protected_super(ref, object) ||
+        (!object.silenced && definition(object.card_id).destroy_immune);
+}
+
 void Resolver::damage(Ref target, int amount) {
     auto* object = find(state_, target);
     if (!object || !follower(*object) || object->hp <= 0) {
@@ -716,6 +729,9 @@ void Resolver::damage(Ref target, int amount) {
     }
     if (protected_super(target, *object)) {
         amount = 0;
+    }
+    if (!object->silenced && amount > 3 && definition(object->card_id).damage_cap) {
+        amount = std::min(amount, definition(object->card_id).damage_cap);
     }
     if (has(*object, kBarrier) && (amount > 0 || rules_.zero_damage_consumes_barrier)) {
         object->abilities &= ~kBarrier;
@@ -747,7 +763,7 @@ void Resolver::heal_leader(int seat, int amount) {
 
 void Resolver::destroy(Ref target, Ref cause, bool by_ability, std::vector<Ability>* deferred) {
     auto* object = find(state_, target);
-    if (!object || (by_ability && (object->earth_count > 0 || protected_super(target, *object)))) {
+    if (!object || (by_ability && protected_destruction(target, *object))) {
         return;
     }
     auto& player = state_.players[target.seat];
@@ -761,9 +777,16 @@ void Resolver::destroy(Ref target, Ref cause, bool by_ability, std::vector<Abili
     if (follower(removed)) {
         const auto card = printed_card(removed.card_id);
         ++(legacy_counter(card) ? player.destroyed_followers[card - kFirstCard] : ensure_counter(player, card).destroyed);
+        if (definition(card).official_id == 90051110) {
+            Ability event{OnFollowerDestroyed};
+            event.event_card = card;
+            broadcast(target.seat, event, true, false);
+            broadcast(1 - target.seat, event, true, false);
+        }
     } else {
         const auto card = removed.card_id;
         ++(legacy_counter(card) ? player.destroyed_amulets[card - kFirstCard] : ensure_counter(player, card).destroyed);
+        progress_faith(target.seat, OnAmuletDestroyed, card);
         if (deferred) {
             for (int i = 0; i < player.board_count; ++i) {
                 const auto& observer = player.board[i];
@@ -811,16 +834,18 @@ void Resolver::banish(Ref target) {
     }
 }
 
-void Resolver::copy_board(int owner, Permanent copy) {
+Ref Resolver::copy_board(int owner, Permanent copy) {
     const auto created = enter(owner, copy.card_id, copy.modifiers);
     if (auto* added = find(state_, created)) {
         copy.creation_order = created.order;
         copy.entry_ply = static_cast<std::uint8_t>(ply(state_));
         copy.readied = copy.attacked_this_turn = copy.attacked_twice = copy.acted_this_turn = false;
+        copy.attacked_thrice = false;
         copy.earth_count = added->earth_count;
         copy.clue_count = added->clue_count;
         *added = copy;
     }
+    return created;
 }
 
 void Resolver::collect_dead(Ref cause) {
@@ -852,6 +877,10 @@ void Resolver::resolve() {
             throw std::logic_error("Ability queue did not terminate");
         }
         const auto ability = waiting_[cursor];
+        if (ability.origin == Origin::DirectSummon) {
+            direct_summon(ability.source.seat);
+            continue;
+        }
         if (ability.origin == Origin::SuperDamage) {
             damage_leader(1 - ability.source.seat, 1);
             settle(ability.source);
@@ -939,6 +968,16 @@ void Resolver::run_steps(const Ability& ability, std::span<const Effect> effects
             } else if (step.operation == Operation::PayFusionPp) {
                 paid = player.available_pp() >= step.amount;
                 if (!paid) continue;
+            } else if (step.operation == Operation::SpendFaith) {
+                paid = false;
+                const auto faith = definition(ability.card).faith;
+                for (int slot = 0; slot < player.faith_count; ++slot) {
+                    if (player.faiths[slot] != faith || player.faith_values[slot] < step.amount) continue;
+                    player.faith_values[slot] -= static_cast<std::uint16_t>(step.amount);
+                    paid = true;
+                    break;
+                }
+                continue;
             }
             effect(ability, step, picked[i]);
             settle(ability.source);
@@ -986,6 +1025,7 @@ Ref Resolver::enter(int seat, CardId card, CardModifiers modifiers) {
         static_cast<std::uint8_t>(def.countdown), static_cast<std::uint8_t>(ply(state_)),
         Evolution::None, false, false, false, false, false, static_cast<std::uint16_t>(earth), modifiers,
     };
+    player.board[player.board_count - 1].attack_limit = static_cast<std::uint8_t>(def.attack_limit);
     if (def.kind == Kind::Follower) ++player.followers_entered;
     const bool artifact = def.kind == Kind::Follower && has_trait(def, kArtifactTrait);
     if (def.track_entries || artifact) {
@@ -993,14 +1033,21 @@ Ref Resolver::enter(int seat, CardId card, CardModifiers modifiers) {
         if (artifact && entered == 0) ++player.artifact_types_entered;
         if (entered < 255) ++entered;
     }
-    if (is_large_follower(def)) {
+    if (def.kind == Kind::Follower) {
+        const bool large = is_large_follower(def);
         for (int i = 0; i < player.hand_count; ++i) {
-            const int amount = definition(player.hand[i]).hand_large_entry_discount;
-            if (amount) modify_hand_cost(player.hand_modifiers[i], -amount, true);
+            const auto& held = definition(player.hand[i]);
+            if (large && held.hand_large_entry_discount) {
+                modify_hand_cost(player.hand_modifiers[i], -held.hand_large_entry_discount, true);
+            }
+            if (held.hand_discount_entry_card == card) {
+                modify_hand_cost(player.hand_modifiers[i], -1, false);
+            }
         }
     }
     board_ability(ref, OnEnter);
     if (def.kind == Kind::Follower) {
+        progress_faith(seat, OnFollowerEntered, card);
         Ability event{OnFollowerEntered};
         event.event_order = ref.order;
         event.event_card = card;
@@ -1053,6 +1100,7 @@ void Resolver::transform(Ref ref, CardId card, CardModifiers modifiers, Evolutio
                static_cast<std::uint16_t>(form.clue), static_cast<std::uint8_t>(form.countdown),
                static_cast<std::uint8_t>(ply(state_)), Evolution::None, false, false, false, false,
                false, static_cast<std::uint16_t>(form.earth), modifiers};
+    object->attack_limit = static_cast<std::uint8_t>(form.attack_limit);
     if (form.kind == Kind::Follower && evolution != Evolution::None) set_evolved_form(*object, evolution);
     if (rules_.reset_name_counts_on_transform) counts(state_.players[ref.seat], form.id) = {};
 }
@@ -1266,6 +1314,9 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
         case Magnitude::OwnLargeFollowers:
             return static_cast<int>(std::count_if(player.board.begin(), player.board.begin() + player.board_count,
                 [](const auto& object) { return is_large_follower(definition(object.card_id)); }));
+        case Magnitude::EarthSigils:
+            if (const int slot = earth_slot(player); slot >= 0) return static_cast<int>(player.board[slot].earth_count);
+            return 0;
         }
         return 0;
     };
@@ -1319,6 +1370,29 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
     case Target::AllOtherRandomSixFollowers:
         random_group = true; picks = 6; gather(owner, other_follower); gather(enemy, follower); break;
     case Target::AllOwnAmulets: gather(owner, [](const auto& object) { return !follower(object); }); break;
+    case Target::AllAmulets:
+        gather(owner, [](const auto& object) { return !follower(object); });
+        gather(enemy, [](const auto& object) { return !follower(object); });
+        break;
+    case Target::EnemyOneHpFollowers:
+        gather(enemy, [](const auto& object) { return follower(object) && object.hp == 1; });
+        break;
+    case Target::RandomOwnNamedPermanent:
+        random_group = true;
+        gather(owner, [&](const auto& object) { return object.card_id == step.card; });
+        break;
+    case Target::ChosenOtherThreePermanents:
+        for (int offset = 0; offset < kPlayers; ++offset) {
+            const auto seat = (owner + offset) % kPlayers;
+            const auto& side = state_.players[seat];
+            for (int slot = 0; slot < side.board_count; ++slot) {
+                const auto& object = side.board[slot];
+                if (object.creation_order != source.order && (ability.selection & (1 << (offset * kBoardLimit + slot)))) {
+                    targets[target_count++] = {seat, object.creation_order};
+                }
+            }
+        }
+        break;
     case Target::AllSmallEnemyFollowers:
         gather(enemy, [](const auto& object) { return follower(object) && object.hp <= 3; }); break;
     case Target::AllNonAssailantFollowers: {
@@ -1435,7 +1509,7 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
     case Target::EnemyEventFollower:
         target = {step.target == Target::EventFollower ? owner : enemy, ability.event_order};
         break;
-    case Target::ChosenOtherPermanent:
+    case Target::ChosenOtherFollower: case Target::ChosenOtherPermanent:
         target = {find(state_, {owner, ability.chosen}) ? owner : enemy, ability.chosen};
         break;
     case Target::RandomEnemyFollower:
@@ -1563,6 +1637,7 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
         if (auto* object = find(state_, target)) {
             object->silenced = true;
             object->abilities = 0;
+            object->attack_limit = 0;
             object->temporary_abilities = 0;
             object->banish_at_end = false;
         }
@@ -1701,6 +1776,14 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
     case RestoreEp:
         player.ep = static_cast<std::uint8_t>(std::min(255, player.ep + step.amount));
         break;
+    case RestoreSep:
+        player.sep = static_cast<std::uint8_t>(std::min(2, player.sep + amount));
+        break;
+    case SetAttackLimit:
+        if (auto* object = find(state_, target)) {
+            object->attack_limit = static_cast<std::uint8_t>(std::max(static_cast<int>(object->attack_limit), amount));
+        }
+        break;
     case RemoveAbilities:
         if (auto* object = find(state_, target)) {
             object->abilities &= ~step.granted_abilities;
@@ -1781,6 +1864,8 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
     case GrantFaith:
         grant_faith(player, step.card);
         break;
+    case SpendFaith:
+        break; // Payment is resolved before the following CostPaid step.
     case Discard:
         if (step.target == Target::ChosenOwnHandTwo) {
             for (int slot = player.hand_count - 1; slot >= 0; --slot) {
@@ -1797,6 +1882,12 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
     case GrantCrest:
         grant_crest(step.target == Target::EnemyLeader ? enemy : owner, step.crest);
         break;
+    case BanishCrests:
+        for (auto& side : state_.players) {
+            side.crests = {};
+            side.crest_count = 0;
+        }
+        break;
     case DestroyCrest:
     case ReduceCrest: {
         const auto end = player.crests.begin() + player.crest_count;
@@ -1812,6 +1903,24 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
         opponent.leader_hp = std::min(opponent.leader_hp, opponent.leader_max_hp);
         break;
     }
+    case HalveMaxHp: {
+        auto& opponent = state_.players[enemy];
+        opponent.leader_max_hp = static_cast<std::int16_t>((opponent.leader_max_hp + rules_.round_half_max_hp_up) / 2);
+        opponent.leader_hp = std::min(opponent.leader_hp, opponent.leader_max_hp);
+        break;
+    }
+    case DestroyMatchingEnemy:
+        if (const auto* chosen = find(state_, target)) {
+            const auto name = definition(chosen->card_id).name;
+            auto& opponent = state_.players[enemy];
+            for (int slot = opponent.board_count - 1; slot >= 0; --slot) {
+                const auto& object = opponent.board[slot];
+                if (follower(object) && definition(object.card_id).name == name) {
+                    destroy({enemy, object.creation_order}, source, true);
+                }
+            }
+        }
+        break;
     case Spellboost:
         for (int i = 0; i < player.hand_count; ++i) {
             if (step.target == Target::ChosenBoostedHand && i != hand_slot) continue;
@@ -2365,6 +2474,127 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
             add_card(player, printed_card(object->card_id), modifiers);
         }
         break;
+    case CardHandler::DrawToBoard: {
+        const int slot = player.hand_count;
+        draw_cards(owner, 1);
+        if (state_.outcome != Outcome::Ongoing || player.hand_count <= slot || player.board_count == kBoardLimit) break;
+        const auto id = player.hand[slot];
+        if (definition(id).kind == Kind::Follower && definition(id).class_name == "エルフ") {
+            const auto modifiers = player.hand_modifiers[slot];
+            erase_hand(player, slot);
+            enter(owner, id, modifiers);
+        }
+        break;
+    }
+    case CardHandler::LightOff: {
+        if (player.deck_remaining() > 0) uncertain();
+        int retained = player.deck_idx;
+        for (int slot = player.deck_idx; slot < player.deck_end; ++slot) {
+            if (definition(player.deck[slot]).cost <= 4) continue;
+            player.deck[retained] = player.deck[slot];
+            player.deck_modifiers[retained++] = player.deck_modifiers[slot];
+        }
+        player.deck_end = static_cast<std::uint8_t>(retained);
+        int discarded = 0;
+        for (int slot = player.hand_count - 1; slot >= 0; --slot) {
+            if (!definition(player.hand[slot]).clue) continue;
+            discard(owner, slot);
+            ++discarded;
+        }
+        for (int hit = 0; hit < discarded && state_.outcome == Outcome::Ongoing; ++hit) {
+            if (const auto selected = random_enemy(owner)) damage({enemy, selected}, 8);
+            settle(source);
+        }
+        break;
+    }
+    case CardHandler::Omega: {
+        const int first = pick_index(4);
+        const int other = pick_index(3);
+        const int second = other + (other >= first);
+        for (int index = 0; index < 4 && state_.outcome == Outcome::Ongoing; ++index) {
+            if (index != first && index != second) continue;
+            switch (index) {
+            case 0: destroy({enemy, random_enemy(owner)}, source, true); break;
+            case 1: damage_leader(enemy, 2); break;
+            case 2: primitive(Operation::RestorePp, Target::None, 2); break;
+            case 3:
+                effect(ability, {.operation=Operation::Buff, .target=Target::Self, .amount=4, .health_modifier=4}, 0);
+                if (!follower_fanfare_suppressed(player) && fanfare_repeats_ < rules_.fanfare_repeat_limit) {
+                    ++fanfare_repeats_;
+                    board_ability(source, OnPlay);
+                }
+                break;
+            }
+            settle(source);
+        }
+        break;
+    }
+    case CardHandler::Orluon:
+        for (int hit = 0; hit < 3 && state_.outcome == Outcome::Ongoing; ++hit) {
+            std::array<Ref, 2 + 2 * kBoardLimit> choices{{{owner}, {enemy}}};
+            int count = 2;
+            for (int seat = 0; seat < kPlayers; ++seat) {
+                const auto& side = state_.players[seat];
+                for (int slot = 0; slot < side.board_count; ++slot) {
+                    const auto& object = side.board[slot];
+                    if (follower(object) && object.creation_order != source.order) choices[count++] = {seat, object.creation_order};
+                }
+            }
+            const auto selected = choices[pick_index(count)];
+            if (selected.order) damage(selected, 7);
+            else damage_leader(selected.seat, 7);
+            settle(source);
+        }
+        break;
+    case CardHandler::NoLife:
+        if (const auto* original = find(state_, source)) {
+            const auto copy = copy_board(owner, *original);
+            const auto* object = find(state_, source);
+            if (object->atk == object->hp) break;
+            const bool higher_attack = object->atk > object->hp;
+            auto twin = ability;
+            twin.source = copy;
+            effect(twin, {.operation=Operation::Buff, .target=Target::Self,
+                          .granted_abilities=static_cast<std::uint16_t>(higher_attack ? FLAG_WARD : kBane)}, 0);
+            effect(ability, {.operation=Operation::Buff, .target=Target::Self,
+                             .granted_abilities=static_cast<std::uint16_t>(higher_attack ? FLAG_STORM : kDrain)}, 0);
+        }
+        break;
+    case CardHandler::AbyssCrystal: {
+        int faith = 0;
+        for (int slot = 0; slot < player.faith_count; ++slot) {
+            if (player.faiths[slot] == step.alternate_card) faith = player.faith_values[slot];
+        }
+        std::array<int, 3> portions{};
+        for (int roll = 0; roll < faith; ++roll) ++portions[pick_index(3)];
+        if (const auto gem = enter(owner, step.card); gem.order) {
+            auto summoned = ability;
+            summoned.source = gem;
+            effect(summoned, {.operation=Operation::Buff, .target=Target::Self, .amount=portions[0],
+                              .health_modifier=portions[0]}, 0);
+        }
+        if (portions[1]) heal_leader(owner, portions[1]);
+        if (portions[2]) damage_leader(enemy, portions[2]);
+        break;
+    }
+    case CardHandler::AbyssBook:
+        if (const auto* object = find(state_, target)) {
+            const bool own_amulet = target.seat == owner && !follower(*object);
+            destroy(target, source, true);
+            if (own_amulet) {
+                damage_leader(enemy, 2);
+                if (state_.players[enemy].leader_hp > 0) add_card(player, ability.card);
+            }
+        }
+        break;
+    case CardHandler::BurnedHeal:
+        if (auto* crest = find(state_, owner, source.order);
+            crest && (owner == state_.turn_player || rules_.burn_crest_heal_on_enemy_turn) &&
+            crest->last_trigger_round != state_.turn_number) {
+            crest->last_trigger_round = state_.turn_number;
+            damage_leader(owner, 1);
+        }
+        break;
     }
 }
 
@@ -2386,6 +2616,10 @@ void Resolver::play(Action action) {
     }
     spend(player, payment.cost);
     erase_hand(player, action.src);
+    for (int slot = 0; slot < player.hand_count; ++slot) {
+        const int discount = definition(player.hand[slot]).hand_play_discount;
+        if (discount) modify_hand_cost(player.hand_modifiers[slot], -discount, true);
+    }
     ++counts(player, card).play;
     ++player.plays_this_turn;
     if (payment.form.cost >= 1 && payment.form.cost <= 8) player.played_cost_mask |= 1 << payment.form.cost;
@@ -2523,6 +2757,7 @@ void Resolver::attack(Action action) {
     auto& attacker = player.board[action.src];
     const Ref source{seat, attacker.creation_order};
     ++counts(player, attacker.card_id).attack;
+    attacker.attacked_thrice = attacker.attacked_twice;
     attacker.attacked_twice = attacker.attacked_this_turn;
     attacker.attacked_this_turn = true;
     attacker.abilities &= ~kAmbush;
@@ -2571,10 +2806,10 @@ void Resolver::attack(Action action) {
     if (retaliates) {
         damage(source, defense.atk);
     }
-    if (has(offense, kBane) && !protected_super(target, defense)) {
+    if (has(offense, kBane) && !protected_destruction(target, defense)) {
         find(state_, target)->hp = 0;
     }
-    if (retaliates && has(defense, kBane) && !protected_super(source, offense)) {
+    if (retaliates && has(defense, kBane) && !protected_destruction(source, offense)) {
         find(state_, source)->hp = 0;
     }
     if (has(offense, kDrain)) {
@@ -2631,6 +2866,7 @@ void Resolver::refresh(int seat) {
         object.readied = follower(object) && object.entry_ply != ply(state_);
         object.attacked_this_turn = false;
         object.attacked_twice = false;
+        object.attacked_thrice = false;
         object.acted_this_turn = false;
     }
 }
@@ -2681,6 +2917,21 @@ void Resolver::start_turn() {
     resolve();
 }
 
+void Resolver::direct_summon(int seat) {
+    auto& player = state_.players[seat];
+    if (player.board_count == kBoardLimit) return;
+    std::array<int, kDeckCapacity> candidates{};
+    int count = 0;
+    for (int slot = player.deck_idx; slot < player.deck_end; ++slot) {
+        if (definition(player.deck[slot]).direct_summon_cost_curve) candidates[count++] = slot;
+    }
+    if (player.deck_remaining() > 0) uncertain();
+    if (count == 0) return;
+    const auto [card, modifiers] = take_deck_card(player, candidates[pick_index(count)]);
+    enter(seat, card, modifiers);
+    settle({seat});
+}
+
 void Resolver::end_turn() {
     const int seat = state_.turn_player;
     const bool last_turn = seat == 1 && state_.turn_number == kTurnLimit;
@@ -2696,9 +2947,12 @@ void Resolver::end_turn() {
     current.attacked_leader_last_turn = current.attacked_leader_this_turn;
     current.attacked_leader_this_turn = false;
     for (int slot = 0; slot < current.hand_count; ++slot) {
-        const int combo = definition(current.hand[slot]).hand_end_combo;
+        const auto& card = definition(current.hand[slot]);
+        const int combo = card.hand_end_combo;
+        const int leader_hp = card.hand_end_hp_discount_threshold;
         auto& mods = current.hand_modifiers[slot];
         if (combo && current.plays_this_turn >= combo) mods.cost = static_cast<std::int8_t>(std::max(-127, mods.cost - 1));
+        if (leader_hp && current.leader_hp <= leader_hp) modify_hand_cost(mods, -1, false);
     }
     tick_crests(seat, CrestClock::End);
     if (state_.outcome == Outcome::Ongoing && rules_.lala_summon_timing == LalaSummonTiming::OpponentTurnEnd) {
@@ -2719,6 +2973,9 @@ void Resolver::end_turn() {
                 triggered_.push_back({TurnEnd, Origin::DelayedBanish, ref});
             }
         }
+    }
+    if ((current.played_cost_mask & 0x1fe) == 0x1fe) {
+        triggered_.push_back({TurnEnd, Origin::DirectSummon, {seat}});
     }
     resolve();
     if (state_.outcome != Outcome::Ongoing) {
@@ -2860,7 +3117,21 @@ ActionList legal_actions(const GameState& state, const RuleConfig& rules, PlayCo
     const auto add_targets = [&](ActionType type, int src, int mode, ChoiceTarget choice, bool mandatory) {
         const auto target = choice.target;
         bool found = false;
-        if (target == Target::ChosenOwnHandThree || target == Target::ChosenOwnHandTwo ||
+        if (target == Target::ChosenOtherThreePermanents) {
+            int available = (1 << player.board_count) - 1;
+            if (type != ActionType::Play) available &= ~(1 << src);
+            for (int slot = 0; slot < enemy.board_count; ++slot) {
+                if (can_choose_enemy_permanent(enemy.board[slot])) available |= 1 << (kBoardLimit + slot);
+            }
+            const int count = std::min(3, std::popcount(static_cast<unsigned>(available)));
+            if (mandatory && count < 3) return;
+            for (int subset = available; subset != 0; subset = (subset - 1) & available) {
+                if (std::popcount(static_cast<unsigned>(subset)) == count) {
+                    add(type, src, kNoTarget, mode, subset | kBothBoardsSelection);
+                }
+            }
+            found = count > 0;
+        } else if (target == Target::ChosenOwnHandThree || target == Target::ChosenOwnHandTwo ||
             target == Target::ChosenOtherOwnTwoFollowers || target == Target::ChosenEnemyTwoFollowers) {
             int available = 0;
             int maximum = 2;
@@ -2910,7 +3181,7 @@ ActionList legal_actions(const GameState& state, const RuleConfig& rules, PlayCo
                 }
             }
         } else if (target == Target::ChosenOwnFollower || target == Target::ChosenOtherOwnFollower ||
-                   target == Target::ChosenOwnPermanent || target == Target::ChosenOtherPermanent ||
+                   target == Target::ChosenOwnPermanent || target == Target::ChosenOtherPermanent || target == Target::ChosenOtherFollower ||
                    target == Target::ChosenUnevolvedOwnFollower || target == Target::ChosenOwnNamedFollower ||
                    target == Target::ChosenOwnGolem || target == Target::ChosenOtherUnevolvedOwnFollower ||
                    target == Target::ChosenOwnLargeFollower) {
@@ -2918,7 +3189,7 @@ ActionList legal_actions(const GameState& state, const RuleConfig& rules, PlayCo
                 const auto& object = player.board[dst];
                 const auto& candidate = definition(object.card_id);
                 if (type != ActionType::Play && dst == src &&
-                    (target == Target::ChosenOtherPermanent || target == Target::ChosenOtherOwnFollower ||
+                    (target == Target::ChosenOtherPermanent || target == Target::ChosenOtherFollower || target == Target::ChosenOtherOwnFollower ||
                      target == Target::ChosenOtherUnevolvedOwnFollower)) continue;
                 if ((target == Target::ChosenUnevolvedOwnFollower || target == Target::ChosenOtherUnevolvedOwnFollower) &&
                     object.evolution != Evolution::None) continue;
@@ -2932,7 +3203,7 @@ ActionList legal_actions(const GameState& state, const RuleConfig& rules, PlayCo
             }
         }
         if (target == Target::ChosenEnemyFollower || target == Target::ChosenEnemyPermanent ||
-            target == Target::ChosenOtherPermanent || target == Target::ChosenSmallEnemyFollower ||
+            target == Target::ChosenOtherPermanent || target == Target::ChosenOtherFollower || target == Target::ChosenSmallEnemyFollower ||
             target == Target::ChosenEnemyOrLeader) {
             for (int dst = 0; dst < enemy.board_count; ++dst) {
                 const auto& object = enemy.board[dst];

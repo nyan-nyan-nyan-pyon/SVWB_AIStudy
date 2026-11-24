@@ -191,7 +191,9 @@ struct PositionHash {
                     (static_cast<std::uint64_t>(card.countdown) << 32) |
                     (static_cast<std::uint64_t>(card.attacked_this_turn) << 40) |
                     (static_cast<std::uint64_t>(card.attacked_twice) << 41) |
-                    (static_cast<std::uint64_t>(card.acted_this_turn) << 42));
+                    (static_cast<std::uint64_t>(card.acted_this_turn) << 42) |
+                    (static_cast<std::uint64_t>(card.attacked_thrice) << 43) |
+                    (static_cast<std::uint64_t>(card.attack_limit) << 44));
             }
         }
         return static_cast<std::size_t>(hash ^ (hash >> 32));
