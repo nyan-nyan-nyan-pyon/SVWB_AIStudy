@@ -107,12 +107,15 @@ if(BUILD_TESTING)
     add_test(NAME wb_actor_observation_audit COMMAND test_wb --actor-audit)
     add_test(NAME wb_search_canonicalization COMMAND test_wb --canonicalization)
     add_test(NAME wb_search_forced_lethal COMMAND test_wb --forced-lethal)
+    add_test(NAME wb_search_determinization COMMAND test_wb --determinization)
     set_tests_properties(wb_mirror_random_10000 wb_rotation_mirror_random_10000
         wb_elf_neutral_random_5000 wb_royal_neutral_random_5000
         wb_dragon_neutral_random_5000 wb_nightmare_neutral_random_5000
         wb_witch_neutral_random_5000 wb_nemesis_neutral_random_5000 wb_full_rotation_random_10000 PROPERTIES TIMEOUT 60)
 
     if(Python3_Interpreter_FOUND)
+        add_test(NAME training_storage_and_seat_metrics COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cpp/tests/check_training_storage.py")
         add_test(NAME selfplay_binary_logs COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/cpp/tests/check_logs.py"
             --exe "$<TARGET_FILE:svwb_ai>")

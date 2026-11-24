@@ -60,7 +60,10 @@ def check_exports(path):
             visits = turn["total_visits"]
             assert sum(item["visits"] for item in turn["candidates"]) == visits
             chosen = turn["candidates"][turn["selected_rank"] - 1]
-            assert chosen["actions"] == turn["selected_actions"]
+            if turn["replanned"]:
+                assert chosen["actions"][0] == turn["selected_actions"][0]
+            else:
+                assert chosen["actions"] == turn["selected_actions"]
             if turn["forced_lethal"]:
                 assert visits == 0 and len(turn["candidates"]) == 1 and chosen["value"] == 1
             else:

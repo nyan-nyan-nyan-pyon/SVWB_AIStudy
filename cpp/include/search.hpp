@@ -19,6 +19,7 @@ struct SearchOptions {
     int simulations = 64;
     bool exploration = true;
     bool record_actions = false;
+    bool determinization = true; // Used by the WB turn search.
 };
 
 struct TurnCandidate {

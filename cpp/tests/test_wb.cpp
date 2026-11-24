@@ -3111,7 +3111,7 @@ void actor_audit() {
             for (std::size_t i = 0; i < logged.ranked.size(); ++i) {
                 const auto& candidate = inferred.ranked[i];
                 CHECK(candidate.actions == logged.ranked[i].actions && candidate.selected == logged.ranked[i].selected);
-                auto end_of_moves = state;
+                auto end_of_moves = *inferred.sampled_root;
                 for (const auto action : candidate.actions) {
                     if (action.type == EndTurn) break;
                     CHECK(apply_action(end_of_moves, action));
@@ -3186,7 +3186,7 @@ void search_forced_lethal() {
         s.player(1 - actor).leader_hp = 5;
         s.place(kTrainer, actor);
         s.place(kLilium, actor);
-        const auto decision = search.choose(s.state, true);
+        const auto decision = search.play(s.state, true);
         CHECK(decision.forced && decision.visits == 0 && decision.policy.size() == 1);
         CHECK(decision.policy[0].probability == 1.0F && decision.ranked.size() == 1 &&
               decision.ranked[0].selected && decision.ranked[0].actions.size() == 2);
@@ -3220,6 +3220,98 @@ void search_forced_lethal() {
         CHECK(!search.choose(s.state, false).forced);
     }
     std::cout << "PASS FORCE: 16/16 random weight sets; unknown draws, mutual lethal and deck-out excluded\n";
+}
+
+void determinization_audit() {
+    const auto model = svwb::Mlp::random(83);
+    auto witch = kMirrorDeck;
+    witch.front() = official(10031310);
+    const MatchupFeatures mirror(kMirrorDeck, kMirrorDeck);
+    const MatchupFeatures general(witch, kMirrorDeck);
+    for (int actor = 0; actor < svwb::kPlayers; ++actor) {
+        for (const auto* matchup : {&mirror, &general}) {
+            auto state = new_game(matchup->legacy_mirror() ? kMirrorDeck : witch, kMirrorDeck, 51);
+            apply_legal_action(state, {Mulligan});
+            apply_legal_action(state, {Mulligan});
+            state.turn_player = static_cast<std::uint8_t>(actor);
+            auto& own = state.players[actor];
+            own.pp = own.max_pp = 2;
+            own.deck_modifiers[own.deck_idx].cost = -1;
+            auto other = state;
+            auto& altered_own = other.players[actor];
+            std::reverse(altered_own.deck.begin() + own.deck_idx, altered_own.deck.begin() + own.deck_end);
+            std::reverse(altered_own.deck_modifiers.begin() + own.deck_idx, altered_own.deck_modifiers.begin() + own.deck_end);
+            auto& altered_opponent = other.players[1 - actor];
+            std::reverse(altered_opponent.deck.begin() + altered_opponent.deck_idx, altered_opponent.deck.begin() + altered_opponent.deck_end);
+            std::fill_n(altered_opponent.hand.begin(), altered_opponent.hand_count, kCorrector);
+            altered_opponent.hand_modifiers[0].cost = -4;
+            altered_opponent.deck[altered_opponent.deck_idx] = kEvidence;
+            other.rng_state ^= 1518;
+            std::mt19937 left_rng(115), right_rng(115);
+            Search left(model, model, left_rng, {8, true, true}, matchup);
+            Search right(model, model, right_rng, {8, true, true}, matchup);
+            const auto a = left.choose(state, true);
+            const auto b = right.choose(other, true);
+            CHECK(a.sampled_root && b.sampled_root && *a.sampled_root == *b.sampled_root);
+            CHECK(a.next == b.next && a.actions == b.actions && a.visits == b.visits && a.forced == b.forced);
+            CHECK(a.policy.size() == b.policy.size() && a.ranked.size() == b.ranked.size());
+            for (std::size_t i = 0; i < a.policy.size(); ++i) {
+                CHECK(a.policy[i].features == b.policy[i].features && a.policy[i].probability == b.policy[i].probability);
+            }
+            for (std::size_t i = 0; i < a.ranked.size(); ++i) {
+                const auto& l = a.ranked[i];
+                const auto& r = b.ranked[i];
+                CHECK(l.actions == r.actions && l.visits == r.visits && l.value == r.value && l.selected == r.selected);
+            }
+            CHECK(left_rng() == right_rng());
+
+            const auto live = left.play(state, false);
+            for (const auto action : live.actions) CHECK(apply_action(state, action));
+            CHECK(state == live.next && (state.outcome != Outcome::Ongoing || state.turn_player != actor));
+        }
+    }
+
+    // The declared deck and its publicly revealed plays constrain the hypothesis.
+    Scenario public_cards;
+    public_cards.player(1).public_deck.fill(kExias);
+    public_cards.player(1).public_deck[0] = kLilium;
+    public_cards.state.turn_player = 1;
+    public_cards.hand({kLilium}, 1);
+    public_cards.run({Play, 0});
+    CHECK(public_cards.player(1).public_spent == 1);
+    public_cards.player(1).deck_idx = 1;
+    public_cards.player(1).deck_end = kDeckSize;
+    public_cards.state.turn_player = 0;
+    std::mt19937 rng(97);
+    Search search(model, model, rng, {1, false, true}, &mirror);
+    const auto plan = search.choose(public_cards.state, false);
+    const auto& hidden = plan.sampled_root->players[1];
+    CHECK(hidden.deck_remaining() == 39);
+    CHECK(std::all_of(hidden.deck.begin(), hidden.deck.begin() + hidden.deck_end, [](auto card) { return card == kExias; }));
+
+    Scenario uncertain_draw;
+    uncertain_draw.hand({official(10031310)});
+    uncertain_draw.player().pp = 4;
+    uncertain_draw.player().deck = {kTrainer, kHolyFalcon};
+    uncertain_draw.player().deck_idx = 0;
+    uncertain_draw.player().deck_end = 2;
+    uncertain_draw.player(1).leader_hp = 2;
+    bool tested_replan = false;
+    for (unsigned seed = 0; seed < 20 && !tested_replan; ++seed) {
+        std::mt19937 plan_rng(seed), live_rng(seed);
+        Search planner(model, model, plan_rng, {16, false, true}, &general);
+        const auto predicted = planner.choose(uncertain_draw.state, false);
+        if (predicted.next.outcome != Outcome::FirstWins) continue;
+        Search player(model, model, live_rng, {16, false, true}, &general);
+        const auto actual = player.play(uncertain_draw.state, false);
+        CHECK(actual.replanned && actual.next.outcome != Outcome::FirstWins);
+        auto replay = uncertain_draw.state;
+        for (const auto action : actual.actions) CHECK(apply_action(replay, action));
+        CHECK(replay == actual.next);
+        tested_replan = true;
+    }
+    CHECK(tested_replan);
+    std::cout << "PASS determinization: both seats, identical sampled states, plans, values, visits and policy targets; live replay verified\n";
 }
 
 } // namespace
@@ -3267,6 +3359,7 @@ int main(int argc, char** argv) {
             if (mode == "--actor-audit") actor_audit();
             else if (mode == "--canonicalization") search_canonicalization();
             else if (mode == "--forced-lethal") search_forced_lethal();
+            else if (mode == "--determinization") determinization_audit();
             else if (mode == "--high-cost-unit") {
                 high_cost_cards();
                 high_cost_combat();

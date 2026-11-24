@@ -37,6 +37,9 @@ struct Decision {
     int visits = 0;
     bool forced = false;
     std::vector<RankedTurn> ranked;
+    std::vector<Action> actions;
+    std::unique_ptr<GameState> sampled_root;
+    bool replanned = false;
 };
 
 class Search {
@@ -44,11 +47,16 @@ public:
     Search(const Mlp& first, const Mlp& second, std::mt19937& rng, SearchOptions options,
            const MatchupFeatures* matchup = nullptr);
     ~Search();
+    // Research plans and candidate values describe the sampled position.
     [[nodiscard]] Decision choose(const GameState& state, bool policy);
+    // Advance the live game, replanning if a played action reveals a different position.
+    [[nodiscard]] Decision play(const GameState& state, bool policy);
+    void set_determinization(bool enabled);
 
 private:
     struct Node;
-    void expand(Node& node, std::size_t width);
+    [[nodiscard]] Decision choose_sample(const GameState& state, bool policy);
+    void expand(Node& node, std::size_t width, bool trace);
     [[nodiscard]] std::array<float, kPlayers> simulate(Node& node, const float* root_priors = nullptr);
 
     std::array<const Mlp*, kPlayers> models_;

@@ -371,8 +371,8 @@ Object player_json(const GameState& state, int seat, bool show_hand, const Actio
 
 class Session {
 public:
-    Session(const Mlp& model, int simulations, std::optional<std::uint64_t> seed)
-        : model_(model), default_simulations_(simulations), default_seed_(seed) {}
+    Session(const Mlp& model, int simulations, std::optional<std::uint64_t> seed, bool determinization)
+        : model_(model), default_simulations_(simulations), default_seed_(seed), determinization_(determinization) {}
 
     Object handle(const Object& request) {
         const auto command = field(request, "command", std::string{});
@@ -514,8 +514,9 @@ private:
         if (selected == decision.ranked.end()) {
             throw std::logic_error("MCTS returned no selected plan");
         }
-        auto played = *state_;
-        auto actions = replay(played, selected->actions,
+        const auto& sampled = decision.sampled_root ? *decision.sampled_root : *state_;
+        auto played = for_human ? sampled : *state_;
+        auto actions = replay(played, decision.actions,
                               for_human ? TraceVisibility::HumanCandidate : TraceVisibility::Full);
         if (played != decision.next) {
             throw std::logic_error("MCTS trace does not reproduce the selected position");
@@ -528,8 +529,8 @@ private:
             if (rank > 5 && !item.selected) {
                 continue;
             }
-            auto alternative = *state_;
-            auto plan = item.selected ? actions : replay(alternative, item.actions,
+            auto alternative = sampled;
+            auto plan = item.selected && !decision.replanned ? actions : replay(alternative, item.actions,
                 for_human ? TraceVisibility::HumanCandidate : TraceVisibility::OpponentCandidate);
             Object candidate{{"rank", rank}, {"selected", item.selected}, {"visits", item.visits},
                 {"visit_share", decision.visits > 0 ? static_cast<double>(item.visits) / decision.visits : 0.0},
@@ -544,7 +545,8 @@ private:
             candidates.emplace_back(std::move(candidate));
         }
         return {{"actor", seat_name(state_->turn_player)}, {"turn", state_->turn_number}, {"revision", revision_},
-                {"total_visits", decision.visits}, {"forced_lethal", decision.forced}, {"selected_rank", selection_rank},
+                {"total_visits", decision.visits}, {"forced_lethal", decision.forced},
+                {"determinized", determinization_}, {"replanned", decision.replanned}, {"selected_rank", selection_rank},
                 {"value", selected->value ? Json(static_cast<double>(*selected->value)) : Json{}},
                 {"actions", std::move(actions)}, {"candidates", std::move(candidates)}};
     }
@@ -552,14 +554,14 @@ private:
     Json analyze_turn() const {
         require_turn(human_);
         auto analysis_rng = rng_;
-        Search search(model_, model_, analysis_rng, SearchOptions{simulations_, false, true}, &matchup_);
+        Search search(model_, model_, analysis_rng, SearchOptions{simulations_, false, true, determinization_}, &matchup_);
         return describe_turn(search.choose(*state_, false), true);
     }
 
     Json ai_turn() {
         require_turn(1 - human_);
-        Search search(model_, model_, rng_, SearchOptions{simulations_, false, true}, &matchup_);
-        const auto decision = search.choose(*state_, false);
+        Search search(model_, model_, rng_, SearchOptions{simulations_, false, true, determinization_}, &matchup_);
+        const auto decision = search.play(*state_, false);
         auto trace = describe_turn(decision, false);
         for (const auto& entry : std::get<Array>(trace.at("actions").value)) {
             append(entry);
@@ -606,6 +608,7 @@ private:
     const Mlp& model_;
     int default_simulations_;
     std::optional<std::uint64_t> default_seed_;
+    bool determinization_;
     std::optional<GameState> state_;
     MatchupFeatures matchup_;
     std::mt19937 rng_;
@@ -620,12 +623,17 @@ template<class Char>
 int run(int argc, Char** argv) {
     std::filesystem::path weights;
     int simulations = kDefaultSimulations;
+    bool determinization = true;
     std::optional<std::uint64_t> seed;
     for (int i = 1; i < argc; ++i) {
         const std::filesystem::path option(argv[i]);
         if (option == "--help") {
-            std::cout << "Usage: svwb_play_cli --weights FILE [--simulations 1..256] [--seed INTEGER]\n";
+            std::cout << "Usage: svwb_play_cli --weights FILE [--simulations 1..256] [--seed INTEGER] [--perfect-information]\n";
             return 0;
+        }
+        if (option == "--perfect-information") {
+            determinization = false;
+            continue;
         }
         if (++i == argc) {
             throw std::invalid_argument("Missing CLI option value");
@@ -652,7 +660,7 @@ int run(int argc, Char** argv) {
         throw std::invalid_argument("--weights FILE is required");
     }
     const auto model = Mlp::load(weights);
-    Session session(model, simulations, seed);
+    Session session(model, simulations, seed, determinization);
     std::cout.imbue(std::locale::classic());
     std::cout << std::setprecision(std::numeric_limits<double>::max_digits10);
     for (std::string line; std::getline(std::cin, line);) {

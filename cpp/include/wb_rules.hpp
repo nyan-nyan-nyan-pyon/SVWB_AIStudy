@@ -2,6 +2,7 @@
 
 #include "state.hpp"
 
+#include <compare>
 #include <vector>
 namespace svwb::wb {
 
@@ -96,7 +97,7 @@ struct CardModifiers {
     std::int8_t temporary_cost_delta;
     std::uint8_t effect_flags;
 
-    bool operator==(const CardModifiers&) const = default;
+    auto operator<=>(const CardModifiers&) const = default;
 };
 
 struct Permanent {
@@ -170,6 +171,9 @@ struct PlayerState {
     std::array<std::uint16_t, kCardSlots> destroyed_followers; // By printed card; independent of shadows.
     std::array<std::uint16_t, kCardSlots> destroyed_amulets;
     std::array<CardCounters, kAdditionalCardCounters> other_counters;
+    std::array<CardId, kDeckSize> public_deck;
+    std::array<CardId, kDeckSize> public_generated;
+    std::uint64_t public_spent;
     std::uint16_t shadows;
     std::uint16_t followers_entered;
     std::uint16_t plays_this_turn;
@@ -184,6 +188,7 @@ struct PlayerState {
     std::uint8_t crest_count;
     std::uint8_t faith_count;
     std::uint8_t other_counter_count;
+    std::uint8_t public_generated_count;
     std::uint8_t pp; // Unspent regular PP; bonus_pp is temporary.
     std::uint8_t max_pp;
     std::uint8_t bonus_pp;

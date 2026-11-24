@@ -171,6 +171,34 @@ void add_card(PlayerState& player, CardId id, CardModifiers modifiers = {}) {
     }
 }
 
+void remember_generated(PlayerState& player, CardId id) {
+    if (player.public_generated_count < player.public_generated.size()) {
+        player.public_generated[player.public_generated_count++] = id;
+    }
+}
+
+void add_public_card(PlayerState& player, CardId id, CardModifiers modifiers = {}) {
+    if (player.hand_count < kHandLimit) remember_generated(player, id);
+    add_card(player, id, modifiers);
+}
+
+void reveal_played_card(PlayerState& player, CardId id) {
+    const auto end = player.public_generated.begin() + player.public_generated_count;
+    const auto generated = std::find(player.public_generated.begin(), end, id);
+    if (generated != end) {
+        erase(player.public_generated, player.public_generated_count,
+              static_cast<int>(generated - player.public_generated.begin()));
+        return;
+    }
+    for (std::size_t i = 0; i < player.public_deck.size(); ++i) {
+        const auto bit = std::uint64_t{1} << i;
+        if (player.public_deck[i] == id && !(player.public_spent & bit)) {
+            player.public_spent |= bit;
+            return;
+        }
+    }
+}
+
 void erase_hand(PlayerState& player, int index) {
     std::move(player.hand_modifiers.begin() + index + 1, player.hand_modifiers.begin() + player.hand_count,
               player.hand_modifiers.begin() + index);
@@ -1577,7 +1605,7 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
             modifiers.abilities = step.granted_abilities;
             modifiers.effect_flags = step.effect_flags;
             if (step.cost_override >= 0) modifiers.cost = static_cast<std::int8_t>(step.cost_override - definition(step.card).cost);
-            add_card(player, step.card, modifiers);
+            add_public_card(player, step.card, modifiers);
         }
         break;
     case AddHandModified: {
@@ -1585,7 +1613,7 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
         modifiers.attack = static_cast<std::int8_t>(amount);
         modifiers.defense = static_cast<std::int8_t>(step.health_modifier);
         modifiers.abilities = step.granted_abilities;
-        add_card(player, step.card, modifiers);
+        add_public_card(player, step.card, modifiers);
         break;
     }
     case Summon: case SummonEnemy:
@@ -1654,7 +1682,7 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
             auto& recipient = state_.players[target.seat];
             const auto card = printed_card(object->card_id);
             erase(recipient.board, recipient.board_count, static_cast<int>(object - recipient.board.data()));
-            add_card(recipient, card);
+            add_public_card(recipient, card);
         }
         break;
     case ReturnToDeck:
@@ -1673,7 +1701,9 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
                 break;
             }
             auto& recipient = state_.players[target.seat];
-            return_to_deck(state_, recipient, printed_card(object->card_id), object->modifiers);
+            const auto printed = printed_card(object->card_id);
+            remember_generated(recipient, printed);
+            return_to_deck(state_, recipient, printed, object->modifiers);
             erase(recipient.board, recipient.board_count, static_cast<int>(object - recipient.board.data()));
         }
         break;
@@ -1726,7 +1756,10 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
         if (auto* object = find(state_, target)) object->modifiers.effect_flags |= step.effect_flags;
         break;
     case ShuffleIntoDeck:
-        for (int i = 0; i < std::max(1, amount); ++i) return_to_deck(state_, player, step.card, {});
+        for (int i = 0; i < std::max(1, amount); ++i) {
+            return_to_deck(state_, player, step.card, {});
+            remember_generated(player, step.card);
+        }
         break;
     case TransformNamed:
         for (int i = 0; i < player.hand_count; ++i) {
@@ -2602,6 +2635,7 @@ void Resolver::play(Action action) {
     const int seat = state_.turn_player;
     auto& player = state_.players[seat];
     const CardId card = player.hand[action.src];
+    reveal_played_card(player, card);
     const auto modifiers = player.hand_modifiers[action.src];
     const bool suppress = follower_fanfare_suppressed(player);
     const auto payment = play_cost(definition(card), player.available_pp(), modifiers, suppress);
@@ -2928,6 +2962,7 @@ void Resolver::direct_summon(int seat) {
     if (player.deck_remaining() > 0) uncertain();
     if (count == 0) return;
     const auto [card, modifiers] = take_deck_card(player, candidates[pick_index(count)]);
+    reveal_played_card(player, card);
     enter(seat, card, modifiers);
     settle({seat});
 }
@@ -3055,7 +3090,10 @@ GameState new_game(const Deck& first, const Deck& second, std::uint64_t seed) {
     state.turn_number = 1;
     for (int seat = 0; seat < kPlayers; ++seat) {
         auto& player = state.players[seat];
-        for (const CardId id : seat == 0 ? first : second) {
+        const auto& deck = seat == 0 ? first : second;
+        player.public_deck = deck;
+        std::sort(player.public_deck.begin(), player.public_deck.end());
+        for (const CardId id : deck) {
             if (definition(id).kind == Kind::Faith) {
                 grant_faith(player, id);
             } else {

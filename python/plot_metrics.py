@@ -5,6 +5,7 @@ import csv
 from pathlib import Path
 
 import matplotlib
+from run_storage import replace_file
 
 matplotlib.use("Agg")
 from matplotlib import pyplot as plt
@@ -39,7 +40,7 @@ def plot_metrics(metrics: Path, output: Path):
         temporary = target.with_suffix(".png.tmp")
         fig.savefig(temporary, dpi=150, format="png")
         plt.close(fig)
-        temporary.replace(target)
+        replace_file(temporary, target)
 
     fig, axes = plt.subplots(1, 2, figsize=(8.6, 3.9), layout="constrained")
     fig.suptitle("Training losses", x=0.04, ha="left", fontsize=15, weight="bold")

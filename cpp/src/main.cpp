@@ -47,6 +47,7 @@ struct Options {
     bool wb_rules = false;
     bool evaluate = false;
     bool random_opponent = false;
+    bool opponent_perfect_information = false;
     SearchOptions search;
 };
 
@@ -57,6 +58,7 @@ void usage(std::ostream& out) {
            "               [--snapshot-weights FILE --snapshot-bps 1..10000]\n"
            "               [--simulations N] [--no-exploration] [--log-dir DIR]\n"
            "               [--evaluate [--random-opponent]]\n"
+           "               [--perfect-information | --opponent-perfect-information] (WB)\n"
            "               [--rules legacy|wb]\n"
            "               [--analysis-dir DIR [--trace-game N] [--trace-top N]]\n"
            "Evaluation uses greedy selection and no search noise. --random-opponent\n"
@@ -109,6 +111,11 @@ Options parse_options(int argc, char** argv) {
         }
         if (flag == "--random-opponent") {
             options.random_opponent = true;
+            continue;
+        }
+        if (flag == "--perfect-information" || flag == "--opponent-perfect-information") {
+            if (flag == "--perfect-information") options.search.determinization = false;
+            else options.opponent_perfect_information = true;
             continue;
         }
         if (i + 1 == argc || std::string_view(argv[i + 1]).starts_with("--")) {
@@ -165,6 +172,13 @@ Options parse_options(int argc, char** argv) {
     }
     if (options.opponent_seed && !options.opponent_weights.empty()) {
         throw std::invalid_argument("--opponent-seed and --opponent-weights are mutually exclusive");
+    }
+    if ((!options.search.determinization || options.opponent_perfect_information) && !options.wb_rules) {
+        throw std::invalid_argument("Search information options require WB rules");
+    }
+    if (options.opponent_perfect_information &&
+        (!options.evaluate || options.random_opponent || !options.search.determinization)) {
+        throw std::invalid_argument("--opponent-perfect-information requires evaluation against a model");
     }
     if (options.snapshot.weights.empty() != (options.snapshot.basis_points == 0) ||
         (options.snapshot.basis_points && (options.evaluate || options.opponent_seed || !options.opponent_weights.empty()))) {
@@ -285,6 +299,8 @@ struct MatchStats {
     std::uint64_t policy_samples = 0;
     std::uint64_t a_first = 0;
     std::uint64_t a_wins = 0;
+    std::array<std::uint64_t, 2> a_seat_wins{};
+    std::array<std::uint64_t, 2> seat_wins{};
     std::uint64_t b_wins = 0;
     std::uint64_t draws = 0;
     std::uint64_t snapshot_games = 0;
@@ -343,6 +359,9 @@ void run(const Options& options) {
                 stats.policy_samples += result.log.policies.size();
                 stats.a_first += a_seat == 0;
                 stats.a_wins += result.winner == a_seat;
+                stats.a_seat_wins[a_seat] += result.winner == a_seat;
+                stats.seat_wins[0] += result.winner == 0;
+                stats.seat_wins[1] += result.winner == 1;
                 stats.b_wins += result.winner == 1 - a_seat;
                 stats.draws += result.winner == kDraw;
                 stats.game_seconds += result.elapsed;
@@ -395,6 +414,8 @@ void run(const Options& options) {
               << " mode=" << (options.evaluate ? "evaluate" : "selfplay") << '\n'
               << "A_first=" << stats.a_first << " A_second=" << stats.games - stats.a_first
               << " A_wins=" << stats.a_wins << " B_wins=" << stats.b_wins << " draws=" << stats.draws << '\n'
+              << "A_first_wins=" << stats.a_seat_wins[0] << " A_second_wins=" << stats.a_seat_wins[1]
+              << " first_wins=" << stats.seat_wins[0] << " second_wins=" << stats.seat_wins[1] << '\n'
               << std::fixed << std::setprecision(4)
               << "wall_seconds=" << elapsed << " avg_game_seconds=" << (games > 0 ? stats.game_seconds / games : 0)
               << " wall_seconds_per_game=" << (games > 0 ? elapsed / games : 0)
@@ -422,7 +443,7 @@ int run_application(int argc, char** argv) {
                 options.evaluate, options.random_opponent, options.search,
                 options.deck_a_file.empty() ? svwb::wb::kMirrorDeck : svwb::wb::read_deck(options.deck_a_file),
                 options.deck_b_file.empty() ? svwb::wb::kMirrorDeck : svwb::wb::read_deck(options.deck_b_file),
-                options.snapshot});
+                options.snapshot, options.opponent_perfect_information});
         } else {
             run(options);
         }

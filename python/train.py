@@ -14,6 +14,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from run_storage import replace_file
 
 FEATURES = 256
 SAMPLE_FLOATS = FEATURES + 1
@@ -115,8 +116,8 @@ def save_model(model, directory: Path, generation: int, optimizer=None):
         "model": state,
         "optimizer": optimizer.state_dict() if optimizer is not None else None,
     }, checkpoint_tmp)
-    checkpoint_tmp.replace(directory / "model.pt")
-    weights_tmp.replace(directory / "weights.bin")
+    replace_file(checkpoint_tmp, directory / "model.pt")
+    replace_file(weights_tmp, directory / "weights.bin")
 
 
 def initialize_checkpoint(directory: Path, seed: int):

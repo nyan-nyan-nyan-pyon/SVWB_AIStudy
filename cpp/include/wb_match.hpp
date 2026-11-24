@@ -37,6 +37,7 @@ struct MatchOptions {
     Deck deck_a = kMirrorDeck;
     Deck deck_b = kMirrorDeck;
     SnapshotOpponent snapshot;
+    bool opponent_perfect_information = false;
 };
 
 void run_match(const MatchOptions& options);

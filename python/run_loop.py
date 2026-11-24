@@ -1,6 +1,7 @@
 """Generate self-play, train on recent replay, and evaluate each generation."""
 
 import argparse
+from collections import Counter
 import csv
 import hashlib
 import json
@@ -14,8 +15,9 @@ import time
 import torch
 
 from plot_metrics import plot_metrics
-from match_runner import invoke
-from train import generation_dir, initialize_checkpoint, pick_device, train_generation
+from match_runner import invoke, seat_win_rates, win_counters
+from run_storage import publish_checkpoint, replace_file
+from train import WEIGHT_BYTES, generation_dir, initialize_checkpoint, pick_device, train_generation
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +26,8 @@ LOG_FILES = ("val_log.bin", "pol_log.bin")
 
 def wb_decks(args):
     flags = ["--rules", "wb"]
+    if args.perfect_information:
+        flags.append("--perfect-information")
     for flag, deck in (("--deck-a", args.deck_a), ("--deck-b", args.deck_b)):
         if deck is not None:
             flags.extend((flag, deck))
@@ -39,7 +43,7 @@ def evaluate(args, weights, opponent_weights=None):
               (["--deck-a", "B", "--deck-b", "A"], args.eval_games - first_count)]
     )
     opponent = ["--opponent-weights", opponent_weights] if opponent_weights else ["--random-opponent"]
-    wins = draws = 0
+    counts = Counter()
     eval_seed = (args.seed + 1_000_003) % 2**32
     for index, (deck_args, count) in enumerate(assignments):
         result = invoke(args.exe, [
@@ -49,9 +53,8 @@ def evaluate(args, weights, opponent_weights=None):
         ])
         if int(result["games"]) != count or int(result["A_first"]) != count // 2:
             raise RuntimeError("Evaluation finished with an unexpected seat allocation")
-        wins += int(result["A_wins"])
-        draws += int(result["draws"])
-    return wins, draws
+        counts.update(win_counters(result))
+    return counts
 
 
 def converged(rows, minimum, rules="legacy"):
@@ -73,7 +76,7 @@ def write_json(path, value):
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
                          encoding="utf-8")
-    temporary.replace(path)
+    replace_file(temporary, path)
 
 
 def publish_metrics(output, rows):
@@ -85,7 +88,7 @@ def publish_metrics(output, rows):
         writer = csv.DictWriter(stream, fieldnames=list(fields), extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
-    temporary.replace(csv_path)
+    replace_file(temporary, csv_path)
     plot_metrics(csv_path, output)
 
 
@@ -125,9 +128,10 @@ def initialize_run(args, device):
 
     initial = generation_dir(output, 0)
     if not initial.exists():
-        with tempfile.TemporaryDirectory(prefix=".initial-", dir=output) as staging:
+        with tempfile.TemporaryDirectory(prefix=".initial-", dir=output, ignore_cleanup_errors=True) as staging:
             initialize_checkpoint(Path(staging), args.seed)
-            Path(staging).rename(initial)
+            publish_checkpoint(Path(staging), initial)
+    verify_checkpoint(initial, 0, args.rules)
     rows = []
     for directory in sorted(output.glob("generation_[0-9]*"), key=lambda path: int(path.name.split("_")[-1])):
         if directory == initial:
@@ -135,10 +139,28 @@ def initialize_run(args, device):
         row = json.loads((directory / "metrics.json").read_text(encoding="utf-8"))
         if row["generation"] != len(rows) + 1 or directory != generation_dir(output, row["generation"]):
             raise ValueError("Completed generation directories are not contiguous")
+        verify_checkpoint(directory, row["generation"], args.rules)
         rows.append(row)
     print(f"Training device: {torch.cuda.get_device_name(device) if device.type == 'cuda' else 'CPU'}",
           flush=True)
     return rows
+
+
+def verify_checkpoint(directory, generation, rules):
+    required = ["model.pt"]
+    if generation:
+        required.extend(LOG_FILES)
+        if generation == 1:
+            required.append("evaluation.npz")
+        if rules == "wb":
+            required.append("matchup_features.json")
+    for name in required:
+        path = directory / name
+        if not path.is_file() or path.stat().st_size == 0:
+            raise ValueError(f"Incomplete checkpoint: {path}")
+    weights = directory / "weights.bin"
+    if not weights.is_file() or weights.stat().st_size != WEIGHT_BYTES:
+        raise ValueError(f"Invalid checkpoint weights: {weights}")
 
 
 def snapshot_opponent(args, generation, baseline):
@@ -159,9 +181,9 @@ def run_generation(args, generation, rows, device):
     baseline = args.baseline_weights or generation_dir(output, 0) / "weights.bin"
     snapshot_flags, snapshot_source = snapshot_opponent(args, generation, baseline)
     print(f"Generation {generation}: self-play", flush=True)
-    with tempfile.TemporaryDirectory(prefix=".generation-", dir=output) as stage_name:
+    with tempfile.TemporaryDirectory(prefix=".generation-", dir=output, ignore_cleanup_errors=True) as stage_name:
         stage = Path(stage_name)
-        with tempfile.TemporaryDirectory(prefix="svwb-selfplay-", dir=args.work_dir) as work_name:
+        with tempfile.TemporaryDirectory(prefix="svwb-selfplay-", dir=args.work_dir, ignore_cleanup_errors=True) as work_name:
             work = Path(work_name)
             limits = (["--games", args.games] if args.games else []) + (
                 ["--seconds", args.seconds] if args.seconds else [])
@@ -189,34 +211,34 @@ def run_generation(args, generation, rows, device):
         evaluating_at = time.perf_counter()
         print(f"Generation {generation}: evaluating", flush=True)
         weights = stage / "weights.bin"
-        random_wins, random_draws = evaluate(args, weights)
+        random_stats = evaluate(args, weights)
         previous_weights = previous / "weights.bin"
-        previous_wins, previous_draws = evaluate(args, weights, previous_weights)
-        baseline_wins, baseline_draws = (previous_wins, previous_draws) if baseline == previous_weights else (
-            evaluate(args, weights, baseline)
-        )
+        previous_stats = evaluate(args, weights, previous_weights)
+        baseline_stats = previous_stats if baseline == previous_weights else evaluate(args, weights, baseline)
         evaluated_at = time.perf_counter()
         selfplay_games = int(counters["games"])
+        selfplay_stats = win_counters(counters)
         snapshot_games = int(counters["snapshot_games"]) if snapshot_flags else 0
         row = {
             "generation": generation, **losses,
-            "random_win_rate": random_wins / args.eval_games,
-            "previous_win_rate": previous_wins / args.eval_games,
-            "baseline_win_rate": baseline_wins / args.eval_games,
-            "random_wins": random_wins, "random_draws": random_draws,
-            "previous_wins": previous_wins, "previous_draws": previous_draws,
-            "baseline_wins": baseline_wins, "baseline_draws": baseline_draws,
             "evaluation_games": args.eval_games, "selfplay_games": selfplay_games,
             "snapshot_games": snapshot_games, "snapshot_source": snapshot_source,
-            "selfplay_deck_a_win_rate": int(counters["A_wins"]) / selfplay_games,
+            "selfplay_deck_a_win_rate": selfplay_stats["A_wins"] / selfplay_games,
+            "information_mode": counters.get("information", "legacy"),
+            **seat_win_rates(selfplay_stats, "selfplay"),
             "selfplay_seconds": float(counters["wall_seconds"]),
             "train_seconds": evaluating_at - trained_at,
             "evaluation_seconds": evaluated_at - evaluating_at,
             "generation_seconds": evaluated_at - started,
         }
+        for name, stats in (("random", random_stats), ("previous", previous_stats), ("baseline", baseline_stats)):
+            row[f"{name}_win_rate"] = stats["A_wins"] / stats["games"]
+            row[f"{name}_wins"] = stats["A_wins"]
+            row[f"{name}_draws"] = stats["draws"]
+            row.update(seat_win_rates(stats, name))
         row["converged"] = converged([*rows, row], args.minimum_convergence, args.rules)
         write_json(stage / "metrics.json", row)
-        stage.rename(target)
+        publish_checkpoint(stage, target)
     return row
 
 
@@ -250,11 +272,15 @@ def parse_args():
                         help="Fixed evaluation baseline (default: generation 0 of this run)")
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--perfect-information", action="store_true",
+                        help="Use the previous WB search that sees all cards")
     args = parser.parse_args()
     custom_decks = args.deck_a is not None or args.deck_b is not None
     if custom_decks and args.rules == "legacy":
         parser.error("Deck JSON files require WB rules")
     args.rules = args.rules or ("wb" if custom_decks else "legacy")
+    if args.perfect_information and args.rules != "wb":
+        parser.error("--perfect-information requires WB rules")
     if custom_decks and args.output_dir is None:
         parser.error("Specify --output-dir for a custom deck run")
     for key in ("deck_a", "deck_b", "baseline_weights"):

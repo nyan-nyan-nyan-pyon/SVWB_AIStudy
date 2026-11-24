@@ -261,6 +261,7 @@ void write_turn(std::ostream& out, const GameState& state, const Decision& decis
     out << "    {\n      \"round\":" << static_cast<int>(state.turn_number)
         << ",\"seat\":" << 1 + state.turn_player << ",\"pp_before\":" << state.players[state.turn_player].available_pp()
         << ",\"forced_lethal\":" << (decision.forced ? "true" : "false")
+        << ",\"replanned\":" << (decision.replanned ? "true" : "false")
         << ",\"total_visits\":" << decision.visits << ",\"selected_rank\":";
     const auto selected = std::find_if(decision.ranked.begin(), decision.ranked.end(),
                                        [](const auto& candidate) { return candidate.selected; });
@@ -270,7 +271,7 @@ void write_turn(std::ostream& out, const GameState& state, const Decision& decis
         out << "null";
     }
     out << ",\n      \"selected_actions\":";
-    const auto actions = selected == decision.ranked.end() ? random_play : std::span<const Action>(selected->actions);
+    const auto actions = selected == decision.ranked.end() ? random_play : std::span<const Action>(decision.actions);
     if (actions_json(out, state, actions) != decision.next) {
         throw std::logic_error("Trace does not reproduce the selected successor");
     }
@@ -286,7 +287,7 @@ void write_turn(std::ostream& out, const GameState& state, const Decision& decis
             out << "null";
         }
         out << ",\"actions\":";
-        static_cast<void>(actions_json(out, state, candidate.actions));
+        static_cast<void>(actions_json(out, decision.sampled_root ? *decision.sampled_root : state, candidate.actions));
         out << '}';
     }
     out << "]\n    }";
@@ -376,7 +377,8 @@ Game play(const MatchOptions& options, const MatchupFeatures& matchup, const Mlp
                 game.log.values.push_back({extract_features(state, &matchup), 0});
                 value_seats.push_back(state.turn_player);
             }
-            const auto decision = search.choose(state, logging);
+            if (options.opponent_perfect_information) search.set_determinization(state.turn_player == a_seat);
+            const auto decision = search.play(state, logging);
             if (trace) {
                 write_turn(trace_data, state, decision, game.turns, options.trace_top);
             }
@@ -412,12 +414,14 @@ Game play(const MatchOptions& options, const MatchupFeatures& matchup, const Mlp
 struct Totals {
     std::uint64_t games = 0, a_first = 0, a_wins = 0, b_wins = 0, both_lose = 0;
     std::uint64_t first_wins = 0, second_wins = 0, turns = 0, rounds = 0, policy_samples = 0;
+    std::array<std::uint64_t, kPlayers> a_seat_wins{};
     double game_seconds = 0;
 
     void observe(const Game& game, int a_seat) {
         ++games;
         a_first += a_seat == 0;
         a_wins += outcome_value(game.outcome, a_seat) == 1;
+        a_seat_wins[a_seat] += outcome_value(game.outcome, a_seat) == 1;
         b_wins += outcome_value(game.outcome, 1 - a_seat) == 1;
         first_wins += game.outcome == Outcome::FirstWins;
         second_wins += game.outcome == Outcome::SecondWins;
@@ -561,9 +565,13 @@ void run_match(const MatchOptions& options) {
               << " seed=" << options.seed << " simulations=" << options.search.simulations
               << " mode=" << (options.evaluate ? "evaluate" : "selfplay") << " rules=wb"
               << " feature_schema=" << feature_schema(matchup)
+              << " information=" << (options.search.determinization ? "determinized" : "perfect")
+              << " opponent_information=" << (options.random_opponent ? "random" :
+                     options.search.determinization && !options.opponent_perfect_information ? "determinized" : "perfect")
               << " local_cards=" << matchup.cards().size() << '\n'
               << "A_first=" << totals.a_first << " A_second=" << totals.games - totals.a_first
               << " A_wins=" << totals.a_wins << " B_wins=" << totals.b_wins << " draws=" << totals.both_lose
+              << " A_first_wins=" << totals.a_seat_wins[0] << " A_second_wins=" << totals.a_seat_wins[1]
               << " first_wins=" << totals.first_wins << " second_wins=" << totals.second_wins
               << " both_lose=" << totals.both_lose << '\n'
               << std::fixed << std::setprecision(4)

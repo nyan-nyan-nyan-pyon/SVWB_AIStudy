@@ -16,6 +16,76 @@ constexpr int kBoardFeatures = 12;
 constexpr int kHandZone = kPlayerScalars + kBoardLimit * kBoardFeatures;
 constexpr int kCrestZone = kHandZone + kCardSlots + kDeckCardKinds;
 
+GameState sample_hidden(const GameState& state, std::mt19937& rng) {
+    auto sampled = state;
+    const int actor = state.turn_player;
+    auto& own = sampled.players[actor];
+    auto& opponent = sampled.players[1 - actor];
+
+    // The actor knows the remaining contents of their own deck. Sort before shuffling so
+    // neither the actual order nor the order of modified copies affects the sample.
+    using Card = std::pair<CardId, CardModifiers>;
+    std::array<Card, kDeckCapacity> known{};
+    const int own_remaining = own.deck_remaining();
+    for (int i = 0; i < own_remaining; ++i) {
+        known[i] = {own.deck[own.deck_idx + i], own.deck_modifiers[own.deck_idx + i]};
+    }
+    std::sort(known.begin(), known.begin() + own_remaining);
+    std::shuffle(known.begin(), known.begin() + own_remaining, rng);
+    own.deck = {};
+    own.deck_modifiers = {};
+    own.deck_idx = 0;
+    own.deck_end = static_cast<std::uint8_t>(own_remaining);
+    for (int i = 0; i < own_remaining; ++i) {
+        std::tie(own.deck[i], own.deck_modifiers[i]) = known[i];
+    }
+
+    // Use the declared deck, public plays and known generation. Hidden discards, copies and
+    // transforms can leave the precise distribution unknown, but public zone sizes are exact.
+    std::array<CardId, std::max(2 * kDeckSize, kDeckCapacity + kHandLimit)> unseen{};
+    int count = 0;
+    for (std::size_t i = 0; i < opponent.public_deck.size(); ++i) {
+        if (opponent.public_deck[i] && !(opponent.public_spent & (std::uint64_t{1} << i))) {
+            unseen[count++] = opponent.public_deck[i];
+        }
+    }
+    std::copy_n(opponent.public_generated.begin(), opponent.public_generated_count, unseen.begin() + count);
+    count += opponent.public_generated_count;
+    const auto remaining = opponent.deck_remaining();
+    const auto needed = remaining + opponent.hand_count;
+    const auto& base = opponent.public_deck[0] ? opponent.public_deck : kMirrorDeck;
+    while (count < needed) {
+        unseen[count++] = base[std::uniform_int_distribution<int>(0, kDeckSize - 1)(rng)];
+    }
+    std::shuffle(unseen.begin(), unseen.begin() + count, rng);
+    opponent.hand = {};
+    opponent.hand_modifiers = {};
+    opponent.deck = {};
+    opponent.deck_modifiers = {};
+    opponent.deck_idx = 0;
+    opponent.deck_end = static_cast<std::uint8_t>(remaining);
+    std::copy_n(unseen.begin(), opponent.hand_count, opponent.hand.begin());
+    std::copy_n(unseen.begin() + opponent.hand_count, remaining, opponent.deck.begin());
+    const auto high = static_cast<std::uint64_t>(rng()) << 32;
+    sampled.rng_state = high | rng();
+    return sampled;
+}
+
+bool same_observation(GameState left, GameState right, int actor) {
+    for (auto* state : {&left, &right}) {
+        state->rng_state = 0;
+        for (auto& player : state->players) {
+            player.deck_end = static_cast<std::uint8_t>(player.deck_remaining());
+            player.deck_idx = 0;
+            player.deck = {};
+            player.deck_modifiers = {};
+        }
+        state->players[1 - actor].hand = {};
+        state->players[1 - actor].hand_modifiers = {};
+    }
+    return left == right;
+}
+
 float local_feature(CardId id, const MatchupFeatures& matchup) {
     return static_cast<float>(matchup.local_id(id) + 1) /
         static_cast<float>(std::max<std::size_t>(1, matchup.cards().size()));
@@ -470,11 +540,17 @@ Search::Search(const Mlp& first, const Mlp& second, std::mt19937& rng, SearchOpt
 
 Search::~Search() = default;
 
-void Search::expand(Node& node, std::size_t width) {
+void Search::set_determinization(bool enabled) {
+    if (options_.determinization == enabled) return;
+    options_.determinization = enabled;
+    root_.reset();
+}
+
+void Search::expand(Node& node, std::size_t width, bool trace) {
     const auto& model = *models_[node.state.turn_player];
     auto result = matchup_ && matchup_->legacy_mirror()
-        ? beam<true>(node.state, model, width, options_.record_actions, matchup_, !options_.exploration)
-        : beam<false>(node.state, model, width, options_.record_actions, matchup_, !options_.exploration);
+        ? beam<true>(node.state, model, width, trace, matchup_, !options_.exploration)
+        : beam<false>(node.state, model, width, trace, matchup_, !options_.exploration);
     if (result.forced) {
         node.forced = std::make_unique<Candidate>(std::move(*result.forced));
         return;
@@ -516,7 +592,7 @@ std::array<float, kPlayers> Search::simulate(Node& node, const float* root_prior
             const auto estimate = models_[player]->predict(extract_features(node.state, matchup_)).value;
             return player == 0 ? std::array{estimate, 1.0F - estimate} : std::array{1.0F - estimate, estimate};
         }
-        expand(node, kBeamWidth);
+        expand(node, kBeamWidth, options_.record_actions && !options_.determinization);
     }
     if (node.forced) {
         return {outcome_value(node.forced->next.outcome, 0), outcome_value(node.forced->next.outcome, 1)};
@@ -553,7 +629,7 @@ std::array<float, kPlayers> Search::simulate(Node& node, const float* root_prior
     return value;
 }
 
-Decision Search::choose(const GameState& state, bool policy) {
+Decision Search::choose_sample(const GameState& state, bool policy) {
     if (state.phase != Phase::Main || state.outcome != Outcome::Ongoing) {
         throw std::invalid_argument("Search requires an active main-phase turn");
     }
@@ -562,7 +638,7 @@ Decision Search::choose(const GameState& state, bool policy) {
         root_ = std::make_unique<Node>(state);
     }
     if (root_->edges.empty() && !root_->forced) {
-        expand(*root_, widen ? 2 * kBeamWidth : kBeamWidth);
+        expand(*root_, widen ? 2 * kBeamWidth : kBeamWidth, options_.record_actions || options_.determinization);
     }
     if (root_->forced) {
         auto& forced = *root_->forced;
@@ -570,6 +646,7 @@ Decision Search::choose(const GameState& state, bool policy) {
         result.next = forced.next;
         result.forced = true;
         if (policy) result.policy.push_back({extract_features(forced.decision, matchup_), 1.0F});
+        result.actions = forced.actions;
         if (options_.record_actions) result.ranked.push_back({std::move(forced.actions), 0, 1.0F, true});
         root_.reset();
         return result;
@@ -609,6 +686,7 @@ Decision Search::choose(const GameState& state, bool policy) {
         chosen = std::max_element(visits.begin(), visits.begin() + count) - visits.begin();
     }
     result.next = root_->edges[chosen].candidate.next;
+    result.actions = root_->edges[chosen].candidate.actions;
     if (options_.record_actions) {
         for (std::size_t i = 0; i < count; ++i) {
             auto& edge = root_->edges[i];
@@ -621,9 +699,59 @@ Decision Search::choose(const GameState& state, bool policy) {
         std::stable_sort(result.ranked.begin(), result.ranked.end(),
                          [](const auto& a, const auto& b) { return a.visits > b.visits; });
     }
-    auto next_root = std::move(root_->edges[chosen].child);
-    root_ = std::move(next_root);
+    if (options_.determinization) {
+        root_.reset();
+    } else {
+        auto next_root = std::move(root_->edges[chosen].child);
+        root_ = std::move(next_root);
+    }
     return result;
+}
+
+Decision Search::choose(const GameState& state, bool policy) {
+    if (!options_.determinization) return choose_sample(state, policy);
+    auto sampled = sample_hidden(state, rng_);
+    auto result = choose_sample(sampled, policy);
+    if (options_.record_actions) result.sampled_root = std::make_unique<GameState>(sampled);
+    return result;
+}
+
+Decision Search::play(const GameState& state, bool policy) {
+    if (!options_.determinization) return choose_sample(state, policy);
+    auto actual = state;
+    const int actor = state.turn_player;
+    const auto active = [&] { return actual.outcome == Outcome::Ongoing && actual.turn_player == actor; };
+    Decision first;
+    std::vector<Action> played;
+    while (active() && played.size() < kBeamSteps) {
+        const bool opening = played.empty();
+        auto sampled = sample_hidden(actual, rng_);
+        auto plan = choose_sample(sampled, opening && policy);
+        if (opening) {
+            first = std::move(plan);
+            if (options_.record_actions) first.sampled_root = std::make_unique<GameState>(sampled);
+        }
+        const auto& actions = opening ? first.actions : plan.actions;
+        const auto before = played.size();
+        for (const auto action : actions) {
+            if (played.size() == kBeamSteps || !apply_action(actual, action)) break;
+            played.push_back(action);
+            if (!active()) break;
+            apply_legal_action(sampled, action);
+            if (!same_observation(actual, sampled, actor)) break;
+        }
+        if (played.size() == before) break;
+        if (active()) first.replanned = true;
+    }
+    if (active()) {
+        const Action end{ActionType::EndTurn};
+        apply_legal_action(actual, end);
+        played.push_back(end);
+        first.replanned = true;
+    }
+    first.actions = std::move(played);
+    first.next = actual;
+    return first;
 }
 
 Action choose_mulligan(const GameState& state, const Mlp& model, std::mt19937& rng, const MatchupFeatures* matchup) {
