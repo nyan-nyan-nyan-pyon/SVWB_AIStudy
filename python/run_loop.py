@@ -117,6 +117,14 @@ def config_for(args):
     result = {key: getattr(args, key) for key in keys}
     if getattr(args, "model_type", "mlp") == "attention":
         result["model_type"] = "attention"
+    if getattr(args, "learning_rate", None) is not None:
+        result["learning_rate"] = args.learning_rate
+    if getattr(args, "weight_decay", None) is not None:
+        result["weight_decay"] = args.weight_decay
+    if getattr(args, "dropout", 0.0):
+        result["dropout"] = args.dropout
+    if getattr(args, "value_label_smoothing", 0.0):
+        result["value_label_smoothing"] = args.value_label_smoothing
     if args.rules == "wb":
         result["wb_actor_version"] = 2
     for key in ("deck_a", "deck_b", "baseline_weights"):
@@ -239,7 +247,11 @@ def run_generation(args, generation, rows, device):
         reference = (stage if generation == 1 else generation_dir(output, 1)) / "evaluation.npz"
         losses = train_generation(replay, previous / "model.pt", stage, reference, generation,
                                   device=device, epochs=args.epochs, batch_size=args.batch_size, seed=seed,
-                                  learning_rate=args.learning_rate, model_type=getattr(args, "model_type", "mlp"))
+                                  learning_rate=args.learning_rate,
+                                  weight_decay=getattr(args, "weight_decay", None),
+                                  dropout=getattr(args, "dropout", 0.0),
+                                  value_label_smoothing=getattr(args, "value_label_smoothing", 0.0),
+                                  model_type=getattr(args, "model_type", "mlp"))
         evaluating_at = time.perf_counter()
         print(f"Generation {generation}: evaluating", flush=True)
         weights = stage / w_file
@@ -294,7 +306,13 @@ def parse_args():
     parser.add_argument("--simulations", type=int, default=64)
     parser.add_argument("--eval-games", type=int, default=200, help="Games against each evaluation opponent")
     parser.add_argument("--epochs", type=int, default=5)
-    parser.add_argument("--learning-rate", type=float, help="Override the checkpoint's Adam learning rate")
+    parser.add_argument("--learning-rate", "--lr", dest="learning_rate", type=float,
+                        help="Override the checkpoint's Adam learning rate")
+    parser.add_argument("--weight-decay", type=float, help="Override the checkpoint's weight decay")
+    parser.add_argument("--dropout", type=float, default=0.0,
+                        help="Training dropout probability for Attention model")
+    parser.add_argument("--value-label-smoothing", type=float, default=0.0,
+                        help="Label smoothing factor for value targets")
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--replay-window", type=int, default=5)
     parser.add_argument("--minimum-convergence", type=int, default=20)
@@ -330,6 +348,12 @@ def parse_args():
     args.snapshot_ratio = round(args.snapshot_ratio, 4)
     if args.learning_rate is not None and (not math.isfinite(args.learning_rate) or args.learning_rate <= 0):
         parser.error("--learning-rate must be finite and positive")
+    if args.weight_decay is not None and (not math.isfinite(args.weight_decay) or args.weight_decay < 0):
+        parser.error("--weight-decay must be finite and non-negative")
+    if not (math.isfinite(args.dropout) and 0.0 <= args.dropout < 1.0):
+        parser.error("--dropout must be between 0.0 and 1.0")
+    if not (math.isfinite(args.value_label_smoothing) and 0.0 <= args.value_label_smoothing < 0.5):
+        parser.error("--value-label-smoothing must be between 0.0 and 0.5")
     if args.eval_games < 4 or args.eval_games % 2:
         parser.error("--eval-games must be even and at least four for balanced seats and decks")
     for key in ("generations", "threads", "simulations", "epochs", "batch_size", "replay_window", "minimum_convergence"):

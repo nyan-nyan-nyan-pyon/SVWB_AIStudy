@@ -177,9 +177,12 @@ def main():
 
         metrics = train_generation(
             [(1, gen1)], gen0 / "model.pt", gen1, gen1 / "evaluation.npz", 1,
-            device=torch.device("cpu"), epochs=3, batch_size=16, seed=9002, model_type="attention",
+            device=torch.device("cpu"), epochs=2, batch_size=16, seed=9002,
+            learning_rate=3e-4, weight_decay=1e-2, dropout=0.1, value_label_smoothing=0.05,
+            model_type="attention",
         )
-        assert metrics["model_type"] == "attention"
+        assert metrics["model_type"] == "attention" and metrics["dropout"] == 0.1
+        assert metrics["value_label_smoothing"] == 0.05 and metrics["weight_decay"] == 1e-2
         trained_weights = gen1 / "attn_weights.bin"
         assert trained_weights.stat().st_size == ATTN_WEIGHT_BYTES
 

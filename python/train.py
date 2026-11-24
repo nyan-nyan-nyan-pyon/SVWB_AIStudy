@@ -105,8 +105,9 @@ class Model(nn.Module):
 
 
 class AttentionEncoderLayer(nn.Module):
-    def __init__(self):
+    def __init__(self, dropout: float = 0.0):
         super().__init__()
+        self.dropout = dropout
         self.norm1 = nn.LayerNorm(ATTN_MODEL_DIM, eps=1e-5)
         self.qkv = nn.Linear(ATTN_MODEL_DIM, 3 * ATTN_MODEL_DIM)
         self.out_proj = nn.Linear(ATTN_MODEL_DIM, ATTN_MODEL_DIM)
@@ -125,19 +126,29 @@ class AttentionEncoderLayer(nn.Module):
         scores = scores.masked_fill(key_padding_mask[:, None, None, :], -torch.inf)
         probs = torch.softmax(scores, dim=-1)
         att = torch.matmul(probs, v).transpose(1, 2).contiguous().view(batch_size, seq_len, ATTN_MODEL_DIM)
-        x = x + self.out_proj(att)
-        x = x + self.ffn2(F.relu(self.ffn1(self.norm2(x))))
+        att_out = self.out_proj(att)
+        if self.dropout > 0.0 and self.training:
+            att_out = F.dropout(att_out, p=self.dropout, training=True)
+        x = x + att_out
+        ffn_h = F.relu(self.ffn1(self.norm2(x)))
+        if self.dropout > 0.0 and self.training:
+            ffn_h = F.dropout(ffn_h, p=self.dropout, training=True)
+        ffn_out = self.ffn2(ffn_h)
+        if self.dropout > 0.0 and self.training:
+            ffn_out = F.dropout(ffn_out, p=self.dropout, training=True)
+        x = x + ffn_out
         return x
 
 
 class AttentionModel(nn.Module):
-    def __init__(self):
+    def __init__(self, dropout: float = 0.0):
         super().__init__()
+        self.dropout = dropout
         self.card_embed = nn.Embedding(ATTN_VOCAB, ATTN_CARD_EMBED)
         self.token_proj = nn.Linear(ATTN_TOKEN_INPUT, ATTN_MODEL_DIM)
         self.global_proj = nn.Linear(ATTN_GLOBAL_DIM, ATTN_MODEL_DIM)
         self.cls_embed = nn.Parameter(torch.zeros(ATTN_MODEL_DIM))
-        self.layers = nn.ModuleList([AttentionEncoderLayer() for _ in range(ATTN_LAYERS)])
+        self.layers = nn.ModuleList([AttentionEncoderLayer(dropout=dropout) for _ in range(ATTN_LAYERS)])
         self.final_norm = nn.LayerNorm(ATTN_MODEL_DIM, eps=1e-5)
         self.value_fc1 = nn.Linear(ATTN_MODEL_DIM, ATTN_VALUE_HIDDEN)
         self.value_fc2 = nn.Linear(ATTN_VALUE_HIDDEN, 1)
@@ -163,12 +174,18 @@ class AttentionModel(nn.Module):
         else:
             cls_expanded = cls.unsqueeze(1).expand(-1, candidate_feats.size(1), -1)
             pol_in = torch.cat([cls_expanded, candidate_feats], dim=-1)
-        return self.policy_fc2(F.relu(self.policy_fc1(pol_in))).squeeze(-1)
+        pol_h = F.relu(self.policy_fc1(pol_in))
+        if self.dropout > 0.0 and self.training:
+            pol_h = F.dropout(pol_h, p=self.dropout, training=True)
+        return self.policy_fc2(pol_h).squeeze(-1)
 
     def forward(self, global_feat: torch.Tensor, vocab_ids: torch.Tensor, token_attrs: torch.Tensor,
                 candidate_feats: torch.Tensor | None = None):
         cls = self.encode_cls(global_feat, vocab_ids, token_attrs)
-        value_logit = self.value_fc2(F.relu(self.value_fc1(cls))).squeeze(-1)
+        val_h = F.relu(self.value_fc1(cls))
+        if self.dropout > 0.0 and self.training:
+            val_h = F.dropout(val_h, p=self.dropout, training=True)
+        value_logit = self.value_fc2(val_h).squeeze(-1)
         if candidate_feats is None:
             return value_logit, cls
         return value_logit, self.score_candidates(cls, candidate_feats)
@@ -460,11 +477,18 @@ def measure_attention_drift(model: AttentionModel, previous: AttentionModel, ref
 
 def train_attention_generation(replay_dirs, previous_path: Path, output: Path, reference_path: Path,
                                generation: int, *, device: torch.device, epochs: int, batch_size: int, seed: int,
-                               learning_rate=None):
+                               learning_rate=None, weight_decay=None, dropout: float = 0.0,
+                               value_label_smoothing: float = 0.0):
     if not replay_dirs or epochs < 1 or batch_size < 1:
         raise ValueError("Replay directories, positive epochs and positive batch size are required")
     if learning_rate is not None and (not math.isfinite(learning_rate) or learning_rate <= 0):
         raise ValueError("Learning rate must be finite and positive")
+    if weight_decay is not None and (not math.isfinite(weight_decay) or weight_decay < 0):
+        raise ValueError("Weight decay must be finite and non-negative")
+    if not (math.isfinite(dropout) and 0.0 <= dropout < 1.0):
+        raise ValueError("Dropout must be in [0.0, 1.0)")
+    if not (math.isfinite(value_label_smoothing) and 0.0 <= value_label_smoothing < 0.5):
+        raise ValueError("Value label smoothing must be in [0.0, 0.5)")
     matchups = []
     for _, path in replay_dirs:
         layout = path / "matchup_features.json"
@@ -514,15 +538,21 @@ def train_attention_generation(replay_dirs, previous_path: Path, output: Path, r
     previous, checkpoint = load_attention_checkpoint(previous_path, device)
     if checkpoint["generation"] != generation - 1:
         raise ValueError("The checkpoint must be from the preceding generation")
-    model = AttentionModel().to(device)
+    model = AttentionModel(dropout=dropout).to(device)
     model.load_state_dict(previous.state_dict())
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    wd = 1e-4 if weight_decay is None else weight_decay
+    opt_cls = torch.optim.AdamW if weight_decay is not None else torch.optim.Adam
+    optimizer = opt_cls(model.parameters(), lr=1e-3, weight_decay=wd)
     if checkpoint["optimizer"] is not None:
         optimizer.load_state_dict(checkpoint["optimizer"])
     if learning_rate is not None:
         for group in optimizer.param_groups:
             group["lr"] = learning_rate
+    if weight_decay is not None:
+        for group in optimizer.param_groups:
+            group["weight_decay"] = weight_decay
     del checkpoint
+    model.train()
     totals = torch.zeros(2, device=device)
     for _ in range(epochs):
         turn_order = turns[torch.randperm(turns.numel(), device=storage)]
@@ -531,6 +561,8 @@ def train_attention_generation(replay_dirs, previous_path: Path, output: Path, r
             v_batch = vocab[turn_ids].to(device)
             a_batch = attrs[turn_ids].to(device)
             t_batch = val_targets[turn_ids].to(device)
+            if value_label_smoothing > 0.0:
+                t_batch = t_batch * (1.0 - value_label_smoothing) + 0.5 * value_label_smoothing
             indices = offsets[turn_ids, None] + columns
             valid = indices < offsets[turn_ids + 1, None]
             policy = policies[torch.where(valid, indices, 0)].to(device)
@@ -554,6 +586,9 @@ def train_attention_generation(replay_dirs, previous_path: Path, output: Path, r
         "val_loss": val_loss, "pol_loss": pol_loss, "delta_v": delta_v, "delta_pi": delta_pi,
         "training_turns": turns.numel(), "reference_turns": len(reference["global_feat"]),
         "learning_rate": optimizer.param_groups[0]["lr"],
+        "weight_decay": optimizer.param_groups[0]["weight_decay"],
+        "dropout": dropout,
+        "value_label_smoothing": value_label_smoothing,
         "replay_generations": [number for number, _ in replay_dirs],
         "device": torch.cuda.get_device_name(device) if device.type == "cuda" else "CPU",
         "model_type": "attention",
@@ -601,16 +636,23 @@ def measure_drift(model, previous, reference, device):
 
 def train_generation(replay_dirs, previous_path: Path, output: Path, reference_path: Path,
                      generation: int, *, device: torch.device, epochs: int, batch_size: int, seed: int,
-                     learning_rate=None, model_type: str = "mlp"):
+                     learning_rate=None, weight_decay=None, dropout: float = 0.0,
+                     value_label_smoothing: float = 0.0, model_type: str = "mlp"):
     if model_type == "attention":
         return train_attention_generation(
             replay_dirs, previous_path, output, reference_path, generation,
-            device=device, epochs=epochs, batch_size=batch_size, seed=seed, learning_rate=learning_rate,
+            device=device, epochs=epochs, batch_size=batch_size, seed=seed,
+            learning_rate=learning_rate, weight_decay=weight_decay, dropout=dropout,
+            value_label_smoothing=value_label_smoothing,
         )
     if not replay_dirs or epochs < 1 or batch_size < 1:
         raise ValueError("Replay directories, positive epochs and positive batch size are required")
     if learning_rate is not None and (not math.isfinite(learning_rate) or learning_rate <= 0):
         raise ValueError("Learning rate must be finite and positive")
+    if weight_decay is not None and (not math.isfinite(weight_decay) or weight_decay < 0):
+        raise ValueError("Weight decay must be finite and non-negative")
+    if not (math.isfinite(value_label_smoothing) and 0.0 <= value_label_smoothing < 0.5):
+        raise ValueError("Value label smoothing must be in [0.0, 0.5)")
     matchups = []
     for _, path in replay_dirs:
         layout = path / "matchup_features.json"
@@ -713,7 +755,12 @@ def main():
     parser.add_argument("--eval-file", type=Path)
     parser.add_argument("--replay-window", type=int, default=5)
     parser.add_argument("--epochs", type=int, default=5)
-    parser.add_argument("--learning-rate", type=float, help="Override the checkpoint's Adam learning rate")
+    parser.add_argument("--learning-rate", "--lr", dest="learning_rate", type=float,
+                        help="Override the checkpoint's Adam learning rate")
+    parser.add_argument("--weight-decay", type=float, help="Override the checkpoint's weight decay")
+    parser.add_argument("--dropout", type=float, default=0.0, help="Training dropout probability for Attention")
+    parser.add_argument("--value-label-smoothing", type=float, default=0.0,
+                        help="Label smoothing factor for value targets")
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
@@ -726,7 +773,8 @@ def main():
                                args.eval_file or args.replay_root / "evaluation.npz",
                                args.generation, device=pick_device(args.device), epochs=args.epochs,
                                batch_size=args.batch_size, seed=args.seed, learning_rate=args.learning_rate,
-                               model_type=args.model_type)
+                               weight_decay=args.weight_decay, dropout=args.dropout,
+                               value_label_smoothing=args.value_label_smoothing, model_type=args.model_type)
     print(json.dumps(metrics, indent=2))
 
 
