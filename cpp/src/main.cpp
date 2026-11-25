@@ -50,6 +50,10 @@ struct Options {
     bool opponent_perfect_information = false;
     attn::ModelType model_type = attn::ModelType::Mlp;
     std::optional<attn::ModelType> opponent_model_type;
+    std::optional<SearchVersion> opponent_search_version;
+    bool paired_seeds = false;
+    attn::ArchVariant attention_variant = attn::ArchVariant::V3GlobalEmbDiff;
+    std::filesystem::path outcomes_json;
     SearchOptions search;
 };
 
@@ -122,6 +126,10 @@ Options parse_options(int argc, char** argv) {
             else options.opponent_perfect_information = true;
             continue;
         }
+        if (flag == "--paired-seeds") {
+            options.paired_seeds = true;
+            continue;
+        }
         if (i + 1 == argc || std::string_view(argv[i + 1]).starts_with("--")) {
             throw std::invalid_argument("Missing value for " + std::string(flag));
         }
@@ -177,6 +185,23 @@ Options parse_options(int argc, char** argv) {
                 throw std::invalid_argument("--opponent-model-type must be mlp or attention");
             }
             options.opponent_model_type = value == "attention" ? attn::ModelType::Attention : attn::ModelType::Mlp;
+        } else if (flag == "--search-version") {
+            if (value != "p0" && value != "legacy") {
+                throw std::invalid_argument("--search-version must be p0 or legacy");
+            }
+            options.search.search_version = value == "p0" ? SearchVersion::P0 : SearchVersion::LegacyV2;
+        } else if (flag == "--opponent-search-version") {
+            if (value != "p0" && value != "legacy") {
+                throw std::invalid_argument("--opponent-search-version must be p0 or legacy");
+            }
+            options.opponent_search_version = value == "p0" ? SearchVersion::P0 : SearchVersion::LegacyV2;
+        } else if (flag == "--attention-variant") {
+            if (value == "v2") options.attention_variant = attn::ArchVariant::LegacyV2;
+            else if (value == "v3-g") options.attention_variant = attn::ArchVariant::V3Global;
+            else if (value == "v3-gd" || value == "v3") options.attention_variant = attn::ArchVariant::V3GlobalEmbDiff;
+            else throw std::invalid_argument("--attention-variant must be v2, v3-g, or v3-gd");
+        } else if (flag == "--outcomes-json") {
+            options.outcomes_json = utf8_path(value);
         } else {
             throw std::invalid_argument("Unknown option " + std::string(flag));
         }
@@ -476,7 +501,8 @@ int run_application(int argc, char** argv) {
                 options.deck_a_file.empty() ? svwb::wb::kMirrorDeck : svwb::wb::read_deck(options.deck_a_file),
                 options.deck_b_file.empty() ? svwb::wb::kMirrorDeck : svwb::wb::read_deck(options.deck_b_file),
                 options.snapshot, options.opponent_perfect_information, options.model_type,
-                options.opponent_model_type});
+                options.opponent_model_type, options.opponent_search_version, options.paired_seeds,
+                options.attention_variant, options.outcomes_json});
         } else {
             run(options);
         }

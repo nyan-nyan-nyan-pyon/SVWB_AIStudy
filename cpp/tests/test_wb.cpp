@@ -3418,9 +3418,12 @@ void attention_audit() {
             CHECK(a.attention_policy.size() == b.attention_policy.size() && !a.attention_policy.empty());
             for (std::size_t i = 0; i < a.attention_policy.size(); ++i) {
                 CHECK(a.attention_policy[i].features == b.attention_policy[i].features);
+                CHECK(a.attention_policy[i].emb_diff == b.attention_policy[i].emb_diff);
                 CHECK(a.attention_policy[i].probability == b.attention_policy[i].probability);
-                const float pol_a = model.policy_logit(ctx_state, a.attention_policy[i].features.data());
-                const float pol_b = model.policy_logit(ctx_hidden, b.attention_policy[i].features.data());
+                const float pol_a = model.policy_logit(ctx_state, a.attention_policy[i].features.data(),
+                                                       &a.attention_policy[i].emb_diff);
+                const float pol_b = model.policy_logit(ctx_hidden, b.attention_policy[i].features.data(),
+                                                       &b.attention_policy[i].emb_diff);
                 CHECK(pol_a == pol_b && std::isfinite(pol_a));
             }
             for (std::size_t i = 0; i < a.ranked.size(); ++i) {
@@ -3435,9 +3438,10 @@ void attention_audit() {
                     CHECK(apply_action(ended, {EndTurn}));
                 }
                 const auto replayed_feat = extract_candidate_features(*a.sampled_root, end_of_moves, ended);
+                const auto replayed_diff = extract_candidate_sparse_diff(*a.sampled_root, end_of_moves);
                 const float prob = static_cast<float>(candidate.visits) / a.visits;
                 CHECK(std::any_of(a.attention_policy.begin(), a.attention_policy.end(), [&](const auto& row) {
-                    return row.features == replayed_feat && row.probability == prob;
+                    return row.features == replayed_feat && row.emb_diff == replayed_diff && row.probability == prob;
                 }));
             }
 
@@ -3453,6 +3457,935 @@ void attention_audit() {
     std::cout << "PASS attention info leak audit: hidden hand and deck order masked; tokens, logits, search and replay identical\n";
 }
 
+// ============================================================================
+// P0 & Attention v3 Unit Tests (F01 ~ F12)
+// ============================================================================
+
+void mcts_root_perspective_backup() {
+    // 1. Verify outcome_value zero-sum definition: Win=1.0, Lose=0.0, BothLose=0.5.
+    CHECK(outcome_value(Outcome::FirstWins, 0) == 1.0F && outcome_value(Outcome::FirstWins, 1) == 0.0F);
+    CHECK(outcome_value(Outcome::SecondWins, 0) == 0.0F && outcome_value(Outcome::SecondWins, 1) == 1.0F);
+    CHECK(outcome_value(Outcome::BothLose, 0) == 0.5F && outcome_value(Outcome::BothLose, 1) == 0.5F);
+
+    // 2. Construct 3-level fixed-value game tree:
+    //    Root (actor=0) -> Edge0 (prior=0.6) -> OppNode A (actor=1):
+    //       Edge A0 (prior=0.5) -> RootLeaf A00 (actor=0, leaf_actor_value=0.80 => root=0.80)
+    //       Edge A1 (prior=0.5) -> RootLeaf A01 (actor=0, leaf_actor_value=0.20 => root=0.20)
+    //    Root (actor=0) -> Edge1 (prior=0.4) -> OppNode B (actor=1, leaf_actor_value=0.30 => root=1.0-0.30=0.70):
+    //       Edge B0 (prior=0.7) -> Terminal BothLose (bypasses NN => root=0.50)
+    //       Edge B1 (prior=0.3) -> SameActorNode (actor=0, leaf_actor_value=0.90 => root=0.90)
+    auto make_leaf = [](int actor_seat, float actor_val, Outcome term = Outcome::Ongoing) {
+        auto n = std::make_unique<ExplicitMctsNode>();
+        n->actor = actor_seat;
+        n->leaf_actor_value = actor_val;
+        n->terminal = term;
+        return n;
+    };
+
+    ExplicitMctsNode root{};
+    root.actor = 0;
+
+    auto opp_a = std::make_unique<ExplicitMctsNode>();
+    opp_a->actor = 1;
+    opp_a->leaf_actor_value = 0.60F; // actor=1 => root perspective = 1.0 - 0.60 = 0.40
+    {
+        ExplicitMctsNode::Edge ea0{0.5F, 0.0F, 0, {}};
+        ea0.world_children.push_back(make_leaf(0, 0.80F));
+        opp_a->edges.push_back(std::move(ea0));
+        ExplicitMctsNode::Edge ea1{0.5F, 0.0F, 0, {}};
+        ea1.world_children.push_back(make_leaf(0, 0.20F));
+        opp_a->edges.push_back(std::move(ea1));
+    }
+
+    auto opp_b = std::make_unique<ExplicitMctsNode>();
+    opp_b->actor = 1;
+    opp_b->leaf_actor_value = 0.30F; // actor=1 => root perspective = 1.0 - 0.30 = 0.70
+    {
+        ExplicitMctsNode::Edge eb0{0.7F, 0.0F, 0, {}};
+        eb0.world_children.push_back(make_leaf(0, 0.99F, Outcome::BothLose)); // terminal => must return 0.50 & skip NN!
+        opp_b->edges.push_back(std::move(eb0));
+        ExplicitMctsNode::Edge eb1{0.3F, 0.0F, 0, {}};
+        eb1.world_children.push_back(make_leaf(0, 0.90F));
+        opp_b->edges.push_back(std::move(eb1));
+    }
+
+    {
+        ExplicitMctsNode::Edge e0{0.6F, 0.0F, 0, {}};
+        e0.world_children.push_back(std::move(opp_a));
+        root.edges.push_back(std::move(e0));
+        ExplicitMctsNode::Edge e1{0.4F, 0.0F, 0, {}};
+        e1.world_children.push_back(std::move(opp_b));
+        root.edges.push_back(std::move(e1));
+    }
+
+    int nn_evals = 0;
+
+    // Sim 1: root(v=0): score(e0)=0.5 + 1.5*1*0.6 = 1.4 > score(e1)=0.5 + 0.6 = 1.1 => picks e0 -> evaluates opp_a leaf (actor=1, val=0.60 => root=0.40)
+    run_explicit_mcts_simulation(root, 0, 0, &nn_evals);
+    CHECK(nn_evals == 1 && root.visits == 1 && root.edges[0].visits == 1);
+    CHECK(std::abs(root.edges[0].value_sum - 0.40F) < 1e-6F);
+
+    // Sim 2: root(v=1): score(e0)=0.40 + 1.5*sqrt(2)*0.6/2 = 1.036396; score(e1)=0.50 + 1.5*sqrt(2)*0.4/1 = 1.348528 => picks e1 -> evaluates opp_b leaf (root=0.70)
+    run_explicit_mcts_simulation(root, 0, 0, &nn_evals);
+    CHECK(nn_evals == 2 && root.visits == 2 && root.edges[1].visits == 1);
+    CHECK(std::abs(root.edges[1].value_sum - 0.70F) < 1e-6F);
+
+    // Sim 3: root(v=2): score(e0)=0.40 + 1.5*sqrt(3)*0.6/2 = 1.179423; score(e1)=0.70 + 1.5*sqrt(3)*0.4/2 = 1.219615 => picks e1 -> inside opp_b(actor=1, v=0):
+    //   eb0(prior=0.7): (1-0.5) + 1.5*1*0.7 = 1.55 > eb1: 0.5 + 0.45 = 0.95 => picks eb0 (Terminal BothLose => root=0.50, nn_evals unchanged!)
+    run_explicit_mcts_simulation(root, 0, 0, &nn_evals);
+    CHECK(nn_evals == 2); // Terminal BothLose bypassed NN!
+    CHECK(root.edges[1].visits == 2 && std::abs(root.edges[1].value_sum - 1.20F) < 1e-6F);
+    CHECK(root.edges[1].world_children[0]->edges[0].visits == 1);
+    CHECK(std::abs(root.edges[1].world_children[0]->edges[0].value_sum - 0.50F) < 1e-6F);
+
+    // Sim 4: root(v=3): score(e0)=0.40 + 1.5*2*0.6/2 = 1.30 > score(e1)=0.60 + 1.5*2*0.4/3 = 1.00 => picks e0 -> inside opp_a(actor=1, v=0):
+    //   ea0(prior=0.5) vs ea1(prior=0.5): tie goes to ea0 (leaf=0.80 => root=0.80)
+    run_explicit_mcts_simulation(root, 0, 0, &nn_evals);
+    CHECK(nn_evals == 3 && root.edges[0].visits == 2);
+    CHECK(std::abs(root.edges[0].value_sum - 1.20F) < 1e-6F); // 0.40 + 0.80
+    CHECK(std::abs(root.edges[0].world_children[0]->edges[0].value_sum - 0.80F) < 1e-6F);
+
+    // Sim 5: root(v=4): score(e0)=0.60 + 1.5*sqrt(5)*0.6/3 = 1.270820 > score(e1)=0.60 + 1.5*sqrt(5)*0.4/3 = 1.047214 => picks e0 -> inside opp_a(actor=1, v=1):
+    //   Check one-sided flip at opp_a (actor=1 != root_player=0):
+    //   ea0 has Q_root=0.80 => (1.0 - 0.80) + 1.5*sqrt(2)*0.5/2 = 0.20 + 0.530330 = 0.730330
+    //   ea1 has Q_root=0.50 => (1.0 - 0.50) + 1.5*sqrt(2)*0.5/1 = 0.50 + 1.060660 = 1.560660 => MUST pick ea1 (leaf=0.20 => root=0.20)!
+    run_explicit_mcts_simulation(root, 0, 0, &nn_evals);
+    CHECK(nn_evals == 4 && root.edges[0].visits == 3);
+    CHECK(root.edges[0].world_children[0]->edges[1].visits == 1);
+    CHECK(std::abs(root.edges[0].world_children[0]->edges[1].value_sum - 0.20F) < 1e-6F);
+    CHECK(std::abs(root.edges[0].value_sum - 1.40F) < 1e-6F); // 0.40 + 0.80 + 0.20
+
+    // Sim 6..12: keep visiting opp_a; opponent (actor=1) minimizes Q_root by preferring ea1 (Q_root=0.20 -> 1-Q=0.80) over ea0 (Q_root=0.80 -> 1-Q=0.20)!
+    for (int s = 0; s < 8; ++s) run_explicit_mcts_simulation(root, 0, 0, &nn_evals);
+    CHECK(root.edges[0].world_children[0]->edges[1].visits > root.edges[0].world_children[0]->edges[0].visits);
+
+    // Verify puct_score actor check directly (same actor at child does NOT flip Q, different actor DOES flip Q, U never flips):
+    const float u_only = puct_score(0.0F, 0.5F, 3, 1, 0, 0) - 0.0F;
+    CHECK(std::abs(puct_score(0.8F, 0.5F, 3, 1, 0, 0) - (0.8F + u_only)) < 1e-6F);
+    CHECK(std::abs(puct_score(0.8F, 0.5F, 3, 1, 1, 0) - (0.2F + u_only)) < 1e-6F);
+
+    std::cout << "PASS wb_mcts_root_perspective_backup\n";
+}
+
+void mulligan_crn_and_exclusion() {
+    // Build a 40-card deck where kCorrector has exactly 1 copy, kLilium has 3 copies, and rest are valid cards.
+    Deck custom_deck = kMirrorDeck;
+    // Count kCorrector in kMirrorDeck and replace extra copies so exactly 1 copy of kCorrector exists.
+    int corrector_seen = 0;
+    for (auto& cid : custom_deck) {
+        if (cid == kCorrector) {
+            if (++corrector_seen > 1) cid = kWingedStatue; // wait: check copy limit of kWingedStatue!
+        }
+    }
+    // Construct a clean 40-card deck respecting <= 3 copies per card with exactly 1 copy of kCorrector and 3 copies of kLilium.
+    const auto pool = neutral_bishop_rotation();
+    Deck valid_deck{};
+    int cursor = 0;
+    valid_deck[cursor++] = kCorrector; // 1 copy only (singleton!)
+    for (int c = 0; c < 3; ++c) valid_deck[cursor++] = kLilium; // 3 copies
+    for (CardId id : pool) {
+        if (id == kCorrector || id == kLilium || !is_deck_card(id) || find_card(id)->kind == Kind::Faith) continue;
+        for (int c = 0; c < 3 && cursor < kDeckSize; ++c) valid_deck[cursor++] = id;
+        if (cursor == kDeckSize) break;
+    }
+    CHECK(cursor == kDeckSize);
+
+    auto base_state = new_game(valid_deck, valid_deck, 424242);
+    // Force opening hand to [kCorrector (1-copy), kLilium (3-copy), valid_deck[4], valid_deck[7]].
+    base_state.players[0].hand[0] = kCorrector;
+    base_state.players[0].hand[1] = kLilium;
+    base_state.players[0].hand[2] = valid_deck[4];
+    base_state.players[0].hand[3] = valid_deck[7];
+
+    bool saw_other_copy_of_lilium = false;
+    for (std::uint64_t seed = 1; seed <= 64; ++seed) {
+        const std::uint64_t sample_seed = 0x9E3779B97F4A7C15ULL * seed;
+        // Mask 15 replaces all 4 slots -> exposes the first 4 draws of the CRN stream.
+        const auto ref_all = simulate_mulligan_crn(base_state, 15, sample_seed);
+        for (int mask = 0; mask < 16; ++mask) {
+            const auto res = simulate_mulligan_crn(base_state, static_cast<std::uint8_t>(mask), sample_seed);
+            int draw_ord = 0;
+            for (int slot = 0; slot < 4; ++slot) {
+                if (mask & (1 << slot)) {
+                    // 1. Selected physical instance ID must NEVER appear anywhere in redrawn_physical_ids!
+                    const int excluded_pid = res.offered_physical_ids[slot];
+                    for (int r = 0; r < 4; ++r) {
+                        CHECK(res.redrawn_physical_ids[r] != excluded_pid);
+                    }
+                    // 2. Common Random Numbers: k-th replacement draw matches ref_all's k-th replacement draw!
+                    CHECK(res.redrawn_physical_ids[slot] == ref_all.redrawn_physical_ids[draw_ord]);
+                    CHECK(res.redrawn_cards[slot] == ref_all.redrawn_cards[draw_ord]);
+                    ++draw_ord;
+                } else {
+                    CHECK(res.redrawn_physical_ids[slot] == res.offered_physical_ids[slot]);
+                    CHECK(res.redrawn_cards[slot] == res.offered_cards[slot]);
+                }
+            }
+            // Singleton kCorrector (slot 0): if replaced, kCorrector can NEVER appear in the redrawn 4-card hand!
+            if (mask & 1) {
+                for (int r = 0; r < 4; ++r) CHECK(res.redrawn_cards[r] != kCorrector);
+            }
+            // 3-copy kLilium (slot 1): if replaced, another copy (different physical_id) CAN appear!
+            if ((mask & 2) && res.redrawn_cards[1] == kLilium) {
+                CHECK(res.redrawn_physical_ids[1] != res.offered_physical_ids[1]);
+                saw_other_copy_of_lilium = true;
+            }
+        }
+    }
+    CHECK(saw_other_copy_of_lilium);
+
+    // 3. Verify choose_mulligan never reads the true match deck or opponent hidden hand.
+    const auto attn_model = svwb::attn::AttentionModel::random(777);
+    const MatchupFeatures matchup(valid_deck, valid_deck);
+    auto corrupted = base_state;
+    std::fill(corrupted.players[0].deck.begin(), corrupted.players[0].deck.end(), kCorrector);
+    std::fill(corrupted.players[1].deck.begin(), corrupted.players[1].deck.end(), kCorrector);
+    std::fill(corrupted.players[1].hand.begin(), corrupted.players[1].hand.end(), kCorrector);
+    corrupted.rng_state ^= 0x123456789ABCDEF0ULL;
+
+    std::mt19937 rng1(2026), rng2(2026);
+    const auto m1 = choose_mulligan(base_state, attn_model, rng1, &matchup);
+    const auto m2 = choose_mulligan(corrupted, attn_model, rng2, &matchup);
+    CHECK(m1 == m2);
+
+    std::cout << "PASS wb_mulligan_crn_and_exclusion\n";
+}
+
+void attention_hidden_state_invariance() {
+    const auto sammy = official(10832110);
+    auto witch = kMirrorDeck;
+    witch[0] = sammy;
+    witch[1] = official(10031310);
+    const MatchupFeatures matchup(witch, kMirrorDeck);
+    const auto model = svwb::attn::AttentionModel::random(20261125);
+
+    auto base = new_game(witch, kMirrorDeck, 8192);
+    apply_legal_action(base, {Mulligan});
+    apply_legal_action(base, {Mulligan});
+    for (int step = 0; step < 6 && base.outcome == Outcome::Ongoing; ++step) {
+        apply_legal_action(base, {EndTurn});
+    }
+    base.players[0].crests[0] = {301, CrestId::Testimony, 2, 0, 0};
+    base.players[0].crest_count = 1;
+    base.players[1].faiths[0] = kFaithToken;
+    base.players[1].faith_values[0] = 4;
+    base.players[1].faith_upgrades[0] = 1;
+    base.players[1].faith_count = 1;
+
+    for (int seat = 0; seat < svwb::kPlayers; ++seat) {
+        auto s1 = base;
+        s1.turn_player = static_cast<std::uint8_t>(seat);
+        s1.players[seat].pp = s1.players[seat].max_pp = 5;
+        s1.players[seat].ep = 1;
+        s1.players[seat].sep = 1;
+
+        auto s2 = s1;
+        auto& own2 = s2.players[seat];
+        std::reverse(own2.deck.begin() + own2.deck_idx, own2.deck.begin() + own2.deck_end);
+        std::reverse(own2.deck_modifiers.begin() + own2.deck_idx, own2.deck_modifiers.begin() + own2.deck_end);
+        auto& opp2 = s2.players[1 - seat];
+        std::reverse(opp2.deck.begin() + opp2.deck_idx, opp2.deck.begin() + opp2.deck_end);
+        std::fill_n(opp2.hand.begin(), opp2.hand_count, sammy);
+        opp2.hand_modifiers[0].spellboost = 9;
+        opp2.hand_modifiers[0].cost = -3;
+        s2.rng_state ^= 0xFEEDFACECAFEBEEFULL;
+
+        // Item 1: Root Token
+        const auto tok1 = extract_attention_tokens(s1);
+        const auto tok2 = extract_attention_tokens(s2);
+        CHECK(tok1 == tok2);
+
+        // Item 2: RootContext CLS
+        svwb::attn::RootContext ctx1{}, ctx2{};
+        const float v1 = model.evaluate_root(tok1, ctx1);
+        const float v2 = model.evaluate_root(tok2, ctx2);
+        CHECK(std::abs(v1 - v2) <= 1e-6F);
+        for (int i = 0; i < svwb::attn::kModel; ++i) {
+            CHECK(std::abs(ctx1.cls[i] - ctx2.cls[i]) <= 1e-6F);
+        }
+
+        // Item 3: Legal actions & Proven lethal status
+        const auto leg1 = legal_actions(s1, {}, PlayCopies::Canonical);
+        const auto leg2 = legal_actions(s2, {}, PlayCopies::Canonical);
+        CHECK(leg1.size() == leg2.size());
+        for (int i = 0; i < leg1.size(); ++i) CHECK(leg1[i] == leg2[i]);
+
+        // Item 4: sample_hidden sequence
+        std::mt19937 hrng1(999), hrng2(999);
+        for (int k = 0; k < 4; ++k) {
+            CHECK(sample_hidden_state(s1, hrng1, seat) == sample_hidden_state(s2, hrng2, seat));
+        }
+
+        // Items 5, 6, 7: Candidate features/diffs, MCTS visit distribution, and final selected action sequence
+        std::mt19937 srng1(20261125), srng2(20261125);
+        Search search1(model, model, srng1, {16, false, true, true}, &matchup);
+        Search search2(model, model, srng2, {16, false, true, true}, &matchup);
+        const auto d1 = search1.choose(s1, true);
+        const auto d2 = search2.choose(s2, true);
+        CHECK(d1.forced == d2.forced && d1.lethal_status == d2.lethal_status);
+        CHECK(d1.attention_policy.size() == d2.attention_policy.size());
+        for (std::size_t i = 0; i < d1.attention_policy.size(); ++i) {
+            for (std::size_t j = 0; j < svwb::attn::kCandidateDim; ++j) {
+                CHECK(std::abs(d1.attention_policy[i].features[j] - d2.attention_policy[i].features[j]) <= 1e-6F);
+            }
+            CHECK(d1.attention_policy[i].emb_diff == d2.attention_policy[i].emb_diff);
+            CHECK(std::abs(d1.attention_policy[i].probability - d2.attention_policy[i].probability) <= 1e-6F);
+        }
+        CHECK(d1.ranked.size() == d2.ranked.size());
+        for (std::size_t i = 0; i < d1.ranked.size(); ++i) {
+            CHECK(d1.ranked[i].visits == d2.ranked[i].visits);
+            CHECK(d1.ranked[i].actions == d2.ranked[i].actions);
+            if (d1.ranked[i].value && d2.ranked[i].value) {
+                CHECK(std::abs(*d1.ranked[i].value - *d2.ranked[i].value) <= 1e-6F);
+            }
+        }
+        CHECK(d1.plan == d2.plan && d1.actions == d2.actions);
+    }
+    std::cout << "PASS wb_attention_hidden_state_invariance\n";
+}
+
+void mcts_strategy_fusion_expected_value() {
+    // Artificial 2-world game tree from F02:
+    //   Candidate A (uncertain): Sample 0 -> 100% (1.0), Sample 1 -> 0% (0.0) => E[V(A)] = 50% (0.50)
+    //   Candidate B (safe):      Sample 0 -> 60% (0.6),  Sample 1 -> 60% (0.6) => E[V(B)] = 60% (0.60)
+    //   Per-world optimum average (Strategy Fusion) would be 0.5*(1.0 + 0.6) = 80% (0.80).
+    //   Shared-root expected-value MCTS must converge to Q(A)~0.50, Q(B)=0.60 and choose B!
+    ExplicitMctsNode root{};
+    root.actor = 0;
+
+    ExplicitMctsNode::Edge edge_a{0.5F, 0.0F, 0, {}};
+    {
+        auto w0 = std::make_unique<ExplicitMctsNode>();
+        w0->actor = 1;
+        w0->terminal = Outcome::FirstWins; // 1.0 for root_player=0
+        auto w1 = std::make_unique<ExplicitMctsNode>();
+        w1->actor = 1;
+        w1->terminal = Outcome::SecondWins; // 0.0 for root_player=0
+        edge_a.world_children.push_back(std::move(w0));
+        edge_a.world_children.push_back(std::move(w1));
+    }
+
+    ExplicitMctsNode::Edge edge_b{0.5F, 0.0F, 0, {}};
+    {
+        for (int w = 0; w < 2; ++w) {
+            auto leaf = std::make_unique<ExplicitMctsNode>();
+            leaf->actor = 0;
+            leaf->leaf_actor_value = 0.60F; // 0.60 in both worlds
+            edge_b.world_children.push_back(std::move(leaf));
+        }
+    }
+
+    root.edges.push_back(std::move(edge_a));
+    root.edges.push_back(std::move(edge_b));
+
+    for (int sim = 0; sim < 128; ++sim) {
+        run_explicit_mcts_simulation(root, 0);
+    }
+
+    const float q_a = root.edges[0].value_sum / static_cast<float>(root.edges[0].visits);
+    const float q_b = root.edges[1].value_sum / static_cast<float>(root.edges[1].visits);
+    const float root_ev = (root.edges[0].value_sum + root.edges[1].value_sum) / static_cast<float>(root.visits);
+    CHECK(std::abs(q_a - 0.50F) < 0.05F);
+    CHECK(std::abs(q_b - 0.60F) < 1e-5F);
+    CHECK(root_ev < 0.62F); // Strictly avoids the 0.80 Strategy Fusion overestimate!
+    CHECK(root.edges[1].visits > root.edges[0].visits); // Selects Safe Action B (60%)!
+
+    std::cout << "PASS wb_mcts_strategy_fusion_expected_value\n";
+}
+
+void attention_hidden_pool_consistency() {
+    Scenario s;
+    Deck custom = kMirrorDeck;
+    s.player(1).public_deck = custom;
+    std::sort(s.player(1).public_deck.begin(), s.player(1).public_deck.end());
+    // Mark first 5 cards in public_deck as spent, add 1 generated kEvidence, set hand_count=3, deck_remaining=33 (total=36).
+    s.player(1).public_spent = 0b11111ULL;
+    s.player(1).public_generated[0] = kEvidence;
+    s.player(1).public_generated_count = 1;
+    s.player(1).hand_count = 3;
+    s.player(1).deck_idx = 0;
+    s.player(1).deck_end = 33;
+
+    // Build expected multiset of unseen cards (35 unspent from public_deck + 1 generated kEvidence = 36).
+    std::vector<CardId> expected_pool;
+    for (std::size_t i = 0; i < s.player(1).public_deck.size(); ++i) {
+        if (!(s.player(1).public_spent & (std::uint64_t{1} << i))) {
+            expected_pool.push_back(s.player(1).public_deck[i]);
+        }
+    }
+    expected_pool.push_back(kEvidence);
+    std::sort(expected_pool.begin(), expected_pool.end());
+    CHECK(expected_pool.size() == 36);
+
+    std::mt19937 rng(12345);
+    for (int trial = 0; trial < 32; ++trial) {
+        const auto sampled = sample_hidden_state(s.state, rng, 0);
+        const auto& opp = sampled.players[1];
+        CHECK(opp.hand_count == 3 && opp.deck_remaining() == 33);
+        std::vector<CardId> actual_pool;
+        for (int i = 0; i < opp.hand_count; ++i) {
+            CHECK(find_card(opp.hand[i]) && find_card(opp.hand[i])->kind != Kind::Faith);
+            actual_pool.push_back(opp.hand[i]);
+        }
+        for (int i = opp.deck_idx; i < opp.deck_end; ++i) {
+            CHECK(find_card(opp.deck[i]) && find_card(opp.deck[i])->kind != Kind::Faith);
+            actual_pool.push_back(opp.deck[i]);
+        }
+        std::sort(actual_pool.begin(), actual_pool.end());
+        CHECK(actual_pool == expected_pool);
+    }
+    std::cout << "PASS wb_attention_hidden_pool_consistency\n";
+}
+
+void attention_opponent_private_info_isolation() {
+    const auto attn_model = svwb::attn::AttentionModel::random(314159);
+    const auto mlp_model = svwb::Mlp::random(271828);
+    const MatchupFeatures matchup(kMirrorDeck, kMirrorDeck);
+
+    for (int root_player = 0; root_player < svwb::kPlayers; ++root_player) {
+        const int opp_seat = 1 - root_player;
+        Scenario s_a;
+        s_a.state.turn_player = static_cast<std::uint8_t>(opp_seat);
+        s_a.state.turn_number = 6;
+        s_a.player(opp_seat).pp = s_a.player(opp_seat).max_pp = 6;
+        s_a.player(opp_seat).ep = 1;
+        s_a.player(opp_seat).sep = 1;
+        s_a.hand({kLilium, kExias, kTestimony, kRituel}, opp_seat);
+        s_a.place(kTrainer, root_player);
+        s_a.place(kColette, opp_seat);
+
+        // State A vs State B: ONLY root_player's private hand contents & modifiers differ (hand_count=3 stays identical!).
+        s_a.hand({kWingedStatue, kWingedStatue, kTrainer}, root_player);
+        Scenario s_b = s_a;
+        s_b.hand({kCorrector, kRapid, kTeresa}, root_player);
+        s_b.player(root_player).hand_modifiers[0].cost = -5;
+        s_b.player(root_player).hand_modifiers[1].spellboost = 12;
+
+        for (const ModelRef mref : {ModelRef(attn_model), ModelRef(mlp_model)}) {
+            const auto pol_a = evaluate_opponent_turn_policy(s_a.state, mref, root_player, 0xCAFEBABEULL, &matchup);
+            const auto pol_b = evaluate_opponent_turn_policy(s_b.state, mref, root_player, 0xCAFEBABEULL, &matchup);
+            CHECK(!pol_a.plans.empty() && pol_a.plans == pol_b.plans);
+            CHECK(pol_a.priors.size() == pol_b.priors.size());
+            for (std::size_t i = 0; i < pol_a.priors.size(); ++i) {
+                CHECK(pol_a.priors[i] == pol_b.priors[i]);
+            }
+            CHECK(pol_a.greedy_choice == pol_b.greedy_choice);
+        }
+    }
+    std::cout << "PASS wb_attention_opponent_private_info_isolation\n";
+}
+
+void attention_stochastic_lethal_not_forced() {
+    auto witch = kMirrorDeck;
+    witch[0] = official(10031310); // Insight (1PP Draw 1)
+    const MatchupFeatures matchup(witch, kMirrorDeck);
+    const auto model = svwb::attn::AttentionModel::random(2026);
+
+    // 1. Draw-dependent lethal (Insight draws HolyFalcon at 4PP vs 2HP enemy): Probabilistic, NEVER Proven/forced!
+    {
+        Scenario s;
+        s.hand({official(10031310)});
+        s.player(0).pp = s.player(0).max_pp = 4;
+        s.player(0).deck = {};
+        s.player(0).deck[0] = kHolyFalcon;
+        s.player(0).deck_idx = 0;
+        s.player(0).deck_end = 1;
+        s.player(1).leader_hp = 2;
+
+        auto sim = s.state;
+        std::uint16_t unobs = 0;
+        LethalEvidence ev{};
+        ev.merge(apply_action_with_evidence(sim, {Play, 0}, 0, &unobs));      // Draw HolyFalcon (unobserved!)
+        ev.merge(apply_action_with_evidence(sim, {Play, 0}, 0, &unobs));      // Play drawn HolyFalcon
+        ev.merge(apply_action_with_evidence(sim, {Attack, 0, kEnemyLeader}, 0, &unobs));
+        CHECK(ev.terminal_win_verified && ev.crossed_unresolved_chance && ev.depends_on_hidden_information && ev.used_unobserved_card);
+        CHECK(!ev.is_proven() && classify_lethal(ev) == LethalStatus::Probabilistic);
+
+        std::mt19937 rng(42);
+        Search search(model, model, rng, {16, false, true, true}, &matchup);
+        const auto dec = search.choose(s.state, true);
+        CHECK(!dec.forced && dec.lethal_status != LethalStatus::Proven);
+        CHECK(dec.plan.requires_replan_after_observation || dec.plan.prefix.back().type == EndTurn);
+    }
+
+    // 2. Indirect unobserved card effect: draw unobserved card then play Rabbit (BanishLowestAndEvolve inspects hand)!
+    {
+        Scenario s;
+        s.hand({official(10031310), kRabbit});
+        s.player(0).pp = s.player(0).max_pp = 10;
+        s.player(0).deck[0] = kWingedStatue;
+        s.player(0).deck_idx = 0;
+        s.player(0).deck_end = 1;
+        std::uint16_t unobs = 0;
+        LethalEvidence ev{};
+        ev.merge(apply_action_with_evidence(s.state, {Play, 0}, 0, &unobs)); // Draws into slot 1
+        ev.merge(apply_action_with_evidence(s.state, {Play, 0}, 0, &unobs)); // Plays Rabbit -> BanishLowestAndEvolve
+        CHECK(ev.crossed_unresolved_chance && ev.depends_on_hidden_information && ev.used_unobserved_card);
+    }
+
+    // 3. Random-target lethal (Colette evolve 1 dmg x2 when enemy has 2 followers, one of which is Lilium or blocks):
+    {
+        Scenario s;
+        s.place(kTrainer, 0).evolution = Evolution::Normal;
+        s.place(kAlmiraj, 1);
+        s.place(kExias, 1);
+        s.hand({kColette});
+        std::uint16_t unobs = 0;
+        const auto ev = apply_action_with_evidence(s.state, {Play, 0}, 0, &unobs);
+        CHECK(ev.crossed_unresolved_chance && !ev.is_proven());
+    }
+
+    // 4. Contrast with true deterministic Proven lethal (HolyFalcon already observed in initial hand vs 2HP enemy):
+    {
+        Scenario s;
+        s.hand({kHolyFalcon});
+        s.player(0).pp = s.player(0).max_pp = 4;
+        s.player(1).leader_hp = 2;
+        std::mt19937 rng(42);
+        Search search(model, model, rng, {16, false, true, true}, &matchup);
+        const auto dec = search.choose(s.state, true);
+        CHECK(dec.forced && dec.lethal_status == LethalStatus::Proven && dec.lethal_evidence.is_proven());
+    }
+
+    std::cout << "PASS wb_attention_stochastic_lethal_not_forced\n";
+}
+
+void attention_global64_turn_boundaries() {
+    CHECK(compute_card_vocab_hash() == svwb::attn::kCardVocabHash);
+
+    const auto check_budget = [](int turn_num, int active_seat, int p0_max_pp, int p1_max_pp,
+                                 bool p1_extra_avail, int p1_extra_uses,
+                                 int expected_own_next_pp, int expected_opp_next_pp) {
+        Scenario s;
+        s.state.turn_number = static_cast<std::uint8_t>(turn_num);
+        s.state.turn_player = static_cast<std::uint8_t>(active_seat);
+        s.player(0).max_pp = s.player(0).pp = static_cast<std::uint8_t>(p0_max_pp);
+        s.player(0).extra_pp_available = false;
+        s.player(1).max_pp = s.player(1).pp = static_cast<std::uint8_t>(p1_max_pp);
+        s.player(1).extra_pp_available = p1_extra_avail;
+        s.player(1).extra_pp_uses = static_cast<std::uint8_t>(p1_extra_uses);
+
+        const auto tok = extract_attention_tokens(s.state);
+        CHECK(std::abs(tok.global[8] - expected_own_next_pp / 11.0F) < 1e-6F);
+        CHECK(std::abs(tok.global[36] - expected_opp_next_pp / 11.0F) < 1e-6F);
+        CHECK(tok.global[63] == 0.0F);
+    };
+
+    // First player boundaries: 3T, 6T, 9T
+    check_budget(3, 0, 3, 2, true, 0, 4, 4);   // 1st 3T: own->4, opp(2nd 3T with extra avail)->3+1=4
+    check_budget(3, 0, 3, 2, false, 1, 4, 3);  // 1st 3T: opp already spent extra PP -> 3
+    check_budget(6, 0, 6, 5, false, 1, 7, 7);  // 1st 6T: opp next refresh is 2nd 6T -> refill extra PP -> 6+1=7!
+    check_budget(9, 0, 9, 8, false, 2, 10, 9); // 1st 9T: own next=10, opp next=9
+
+    // Second player boundaries: 3T, 5T, 6T, 10T
+    check_budget(3, 1, 3, 3, true, 0, 5, 4);   // 2nd 3T (extra unused): own next(4T)=4+1=5, opp next(4T)=4
+    check_budget(5, 1, 5, 5, false, 1, 7, 6);  // 2nd 5T (extra spent): own next refresh is 6T -> refill -> 6+1=7!
+    check_budget(6, 1, 6, 6, true, 1, 8, 7);   // 2nd 6T (refilled extra unused): own next(7T)=7+1=8
+    check_budget(6, 1, 6, 6, false, 2, 7, 7);  // 2nd 6T (refilled extra used): own next(7T)=7+0=7
+    check_budget(10, 1, 10, 10, false, 2, 10, 10); // 2nd 10T (extra used): capped at 10
+    check_budget(10, 1, 10, 10, true, 1, 11, 10);  // 2nd 10T (extra held): 10 + 1 = 11
+
+    // Opponent evolution/super-evolution unlock flags ([40], [41]) based on opp_next_turn:
+    {
+        Scenario s;
+        s.state.turn_player = 0;
+        s.state.turn_number = 4; // 1st 4T -> opp next action is 2nd 4T (normal evo unlocked, super locked)
+        auto tok = extract_attention_tokens(s.state);
+        CHECK(tok.global[12] == 0.0F && tok.global[13] == 0.0F);
+        CHECK(tok.global[40] == 1.0F && tok.global[41] == 0.0F);
+
+        s.state.turn_number = 6; // 1st 6T -> opp next action is 2nd 6T (both normal & super unlocked!)
+        tok = extract_attention_tokens(s.state);
+        CHECK(tok.global[12] == 1.0F && tok.global[13] == 0.0F);
+        CHECK(tok.global[40] == 1.0F && tok.global[41] == 1.0F);
+
+        s.state.turn_player = 1;
+        s.state.turn_number = 6; // 2nd 6T -> opp next action is 1st 7T (both normal & super unlocked!)
+        tok = extract_attention_tokens(s.state);
+        CHECK(tok.global[12] == 1.0F && tok.global[13] == 1.0F);
+        CHECK(tok.global[40] == 1.0F && tok.global[41] == 1.0F);
+    }
+
+    // Non-active reset, unclipped (>1.0f) counters, and [25..27]/[53..55] evidence/crest/faith separation:
+    {
+        Scenario s;
+        s.state.turn_player = 0;
+        s.player(0).shadows = 80;
+        s.player(0).plays_this_turn = 25;
+        s.player(0).followers_entered = 80;
+        auto& own_earth = s.place(kEarthSigil, 0);
+        own_earth.earth_count = 20;
+        auto& own_ev = s.place(kEvidence, 0);
+        own_ev.clue_count = 20;
+        s.crest(CrestId::Testimony, 2, 0);
+        s.crest(CrestId::Rituel, 3, 0);
+        s.player(0).faiths[0] = kFaithToken;
+        s.player(0).faith_count = 1;
+
+        // Contaminate non-active opponent's turn-local fields to verify forced 0.0f reset:
+        s.player(1).pp = 7;
+        s.player(1).manual_evolved = true;
+        s.player(1).plays_this_turn = 9;
+        s.player(1).acted_evidence = true;
+        s.player(1).acted_amulet = true;
+        s.player(1).shadows = 96;
+        s.player(1).followers_entered = 96;
+        auto& opp_ev = s.place(kEvidence, 1);
+        opp_ev.clue_count = 24;
+        s.crest(CrestId::Rapid, 2, 1);
+        s.player(1).faiths[0] = kFaithToken;
+        s.player(1).faiths[1] = kFaithToken;
+        s.player(1).faith_count = 2;
+
+        const auto tok = extract_attention_tokens(s.state);
+        // Unclipped > 1.0f
+        CHECK(std::abs(tok.global[14] - 80.0F / 64.0F) < 1e-6F);
+        CHECK(std::abs(tok.global[15] - 25.0F / 20.0F) < 1e-6F);
+        CHECK(std::abs(tok.global[16] - 80.0F / 64.0F) < 1e-6F);
+        CHECK(std::abs(tok.global[17] - 20.0F / 16.0F) < 1e-6F);
+        CHECK(std::abs(tok.global[25] - 20.0F / 16.0F) < 1e-6F);
+        CHECK(std::abs(tok.global[22] - 3.0F / 5.0F) < 1e-6F);
+        CHECK(std::abs(tok.global[26] - 2.0F / 5.0F) < 1e-6F);
+        CHECK(std::abs(tok.global[27] - 1.0F / 5.0F) < 1e-6F);
+
+        // Non-active turn-local resets == 0.0f
+        CHECK(tok.global[31] == 0.0F);
+        CHECK(tok.global[39] == 0.0F);
+        CHECK(tok.global[43] == 0.0F);
+        CHECK(tok.global[51] == 0.0F);
+
+        // Opponent unclipped & crest/faith separation
+        CHECK(std::abs(tok.global[42] - 96.0F / 64.0F) < 1e-6F);
+        CHECK(std::abs(tok.global[44] - 96.0F / 64.0F) < 1e-6F);
+        CHECK(std::abs(tok.global[53] - 24.0F / 16.0F) < 1e-6F);
+        CHECK(std::abs(tok.global[50] - 3.0F / 5.0F) < 1e-6F);
+        CHECK(std::abs(tok.global[54] - 1.0F / 5.0F) < 1e-6F);
+        CHECK(std::abs(tok.global[55] - 2.0F / 5.0F) < 1e-6F);
+    }
+
+    std::cout << "PASS wb_attention_global64_turn_boundaries\n";
+}
+
+void attention_embdiff160_and_migration() {
+    using svwb::attn::ArchVariant;
+    using svwb::attn::AttentionModel;
+
+    // 1. Parameter count verification (AC-04)
+    const auto m_v2 = AttentionModel::random(101, ArchVariant::LegacyV2);
+    const auto m_v3g = AttentionModel::random(102, ArchVariant::V3Global);
+    const auto m_v3gd = AttentionModel::random(103, ArchVariant::V3GlobalEmbDiff);
+    CHECK(m_v2.parameters().size() == 461'826);
+    CHECK(m_v3g.parameters().size() == 465'922);
+    CHECK(m_v3gd.parameters().size() == 486'402);
+
+    // 2. CandidateEmbDiff strict initial -> decision separation & 5-zone signed cancellation & vocab_id==0 masking
+    {
+        Scenario init_s;
+        init_s.hand({kLilium, kLilium, kTrainer});
+        init_s.place(kWingedStatue, 0);
+        init_s.place(kColette, 1);
+        init_s.crest(CrestId::Testimony, 2, 0);
+
+        Scenario dec_s = init_s;
+        dec_s.hand({kLilium, kLilium, kEvidence}); // kLilium count 2 -> 2 (net 0!), -kTrainer, +kEvidence
+        dec_s.player(0).board_count = 0;
+        dec_s.place(kExias, 0);
+        dec_s.player(1).board_count = 0;
+        dec_s.player(0).crest_count = 0;
+        dec_s.crest(CrestId::Rituel, 3, 1);
+
+        const auto diff = extract_candidate_sparse_diff(init_s.state, dec_s.state);
+        CHECK(diff.total_entries() == 7);
+        CHECK(diff.zone_offsets[1] - diff.zone_offsets[0] == 2); // kLilium cancelled out!
+        CHECK(diff.zone_offsets[2] - diff.zone_offsets[1] == 2);
+        CHECK(diff.zone_offsets[3] - diff.zone_offsets[2] == 1);
+        CHECK(diff.zone_offsets[4] - diff.zone_offsets[3] == 1);
+        CHECK(diff.zone_offsets[5] - diff.zone_offsets[4] == 1);
+
+        // Verify vocab_id == 0 explicit zero-masking in materialize_embdiff, DirectMatMul, and PreprojectedTable
+        auto synthetic = diff;
+        synthetic.entries[synthetic.total_entries()] = {0, 5, 0};
+        synthetic.zone_offsets[5] = static_cast<std::uint8_t>(synthetic.total_entries() + 1);
+        CHECK(m_v3gd.materialize_embdiff(diff) == m_v3gd.materialize_embdiff(synthetic));
+
+        svwb::attn::RootContext ctx{};
+        static_cast<void>(m_v3gd.evaluate_root(extract_attention_tokens(init_s.state), ctx));
+        const auto cfeat = extract_candidate_features(init_s.state, dec_s.state, dec_s.state);
+        const float l_dir_clean = m_v3gd.policy_logit_direct(ctx, cfeat.data(), &diff);
+        const float l_dir_zero = m_v3gd.policy_logit_direct(ctx, cfeat.data(), &synthetic);
+        const float l_pre_clean = m_v3gd.policy_logit_preprojected(ctx, cfeat.data(), &diff);
+        const float l_pre_zero = m_v3gd.policy_logit_preprojected(ctx, cfeat.data(), &synthetic);
+        CHECK(l_dir_clean == l_dir_zero && l_pre_clean == l_pre_zero);
+        CHECK(std::abs(l_dir_clean - l_pre_clean) < 1e-5F);
+    }
+
+    // 3. v2 -> v3-G and v2 -> v3-GD warm-start weight migration equivalence (< 1e-5)
+    std::vector<AttentionModel> v2_sources;
+    v2_sources.push_back(m_v2);
+    const std::filesystem::path real_v2("data/phase5c-attn-v2/bishop__bishop/generation_040/attn_weights.bin");
+    if (std::filesystem::is_regular_file(real_v2)) {
+        v2_sources.push_back(AttentionModel::load(real_v2));
+    }
+
+    for (const auto& src_v2 : v2_sources) {
+        const auto mig_v3g = AttentionModel::migrate_v2_to_v3(src_v2, ArchVariant::V3Global);
+        const auto mig_v3gd = AttentionModel::migrate_v2_to_v3(src_v2, ArchVariant::V3GlobalEmbDiff);
+        CHECK(mig_v3g.parameters().size() == 465'922);
+        CHECK(mig_v3gd.parameters().size() == 486'402);
+
+        auto state = new_game(kMirrorDeck, kMirrorDeck, 5555);
+        apply_legal_action(state, {Mulligan});
+        apply_legal_action(state, {Mulligan});
+        for (int t = 0; t < 8 && state.outcome == Outcome::Ongoing; ++t) {
+            const auto tok_v2 = extract_attention_tokens_v2(state);
+            const auto tok_v3 = extract_attention_tokens(state);
+            svwb::attn::RootContext ctx_v2{}, ctx_g{}, ctx_gd{};
+            const float val_v2 = src_v2.evaluate_root(tok_v2, ctx_v2);
+            const float val_g = mig_v3g.evaluate_root(tok_v3, ctx_g);
+            const float val_gd = mig_v3gd.evaluate_root(tok_v3, ctx_gd);
+            CHECK(std::abs(val_v2 - val_g) < 1e-5F && std::abs(val_v2 - val_gd) < 1e-5F);
+            CHECK(std::abs(src_v2.value_logit(tok_v2) - mig_v3gd.value_logit(tok_v3)) < 1e-5F);
+
+            auto dec_state = state;
+            for (const auto act : legal_actions(state, {}, PlayCopies::Canonical)) {
+                if (act.type != EndTurn) {
+                    apply_legal_action(dec_state, act);
+                    break;
+                }
+            }
+            auto next_state = dec_state;
+            if (next_state.outcome == Outcome::Ongoing && next_state.turn_player == state.turn_player) {
+                apply_legal_action(next_state, {EndTurn});
+            }
+            const auto cfeat = extract_candidate_features(state, dec_state, next_state);
+            const auto cdiff = extract_candidate_sparse_diff(state, dec_state);
+            const float p_v2 = src_v2.policy_logit(ctx_v2, cfeat.data(), nullptr);
+            const float p_g = mig_v3g.policy_logit(ctx_g, cfeat.data(), nullptr);
+            const float p_gd = mig_v3gd.policy_logit(ctx_gd, cfeat.data(), &cdiff);
+            CHECK(std::abs(p_v2 - p_g) < 1e-5F && std::abs(p_v2 - p_gd) < 1e-5F);
+
+            state = next_state;
+        }
+    }
+
+    std::cout << "PASS wb_attention_embdiff160_and_migration\n";
+}
+
+void p0_post_chance_beam_completion() {
+    auto witch = kMirrorDeck;
+    witch[0] = official(10031310); // Insight (1PP Spell: Draw 1)
+    const MatchupFeatures matchup(witch, kMirrorDeck);
+    const auto model = svwb::attn::AttentionModel::random(20261125);
+
+    // Scenario: 5 PP, 1 EP, Insight (1PP) in hand, remaining own deck is all kHolyFalcon (4PP 2/2 Storm).
+    // Enemy leader is at 4 HP. Winning requires crossing the Insight draw boundary AND completing the
+    // 3-step post-chance chain: Play HolyFalcon (4PP) -> Evolve HolyFalcon (4 atk) -> Attack Enemy Leader (4 dmg)!
+    Scenario s;
+    s.state.turn_number = 5;
+    s.state.turn_player = 0;
+    s.player(0).pp = s.player(0).max_pp = 5;
+    s.player(0).ep = 1;
+    s.hand({official(10031310)});
+    s.player(0).deck = {};
+    for (int i = 0; i < 10; ++i) s.player(0).deck[i] = kHolyFalcon;
+    s.player(0).deck_idx = 0;
+    s.player(0).deck_end = 10;
+    s.player(1).leader_hp = 4;
+
+    std::mt19937 rng1(777);
+    Search search_choose(model, model, rng1, {32, false, true, true}, &matchup);
+    const auto dec = search_choose.choose(s.state, true);
+    // Must NOT be forced as Proven (depends on drawing from deck), yet beam completion across worlds finds the 4-damage win!
+    CHECK(!dec.forced && dec.lethal_status != LethalStatus::Proven);
+    CHECK(dec.plan.requires_replan_after_observation);
+    CHECK(dec.plan.prefix.size() == 1 && dec.plan.prefix[0].type == Play && dec.plan.prefix[0].src == 0);
+    CHECK(!dec.ranked.empty() && dec.ranked.front().value.has_value() && *dec.ranked.front().value > 0.95F);
+
+    // Live execution via Search::play must stop after Insight, observe drawn kHolyFalcon, replan, evolve, and win!
+    std::mt19937 rng2(777);
+    Search search_play(model, model, rng2, {32, false, false, true}, &matchup);
+    const auto live = search_play.play(s.state, false);
+    CHECK(live.replanned);
+    CHECK(live.next.outcome == Outcome::FirstWins);
+    CHECK(live.next.players[1].leader_hp <= 0);
+
+    std::cout << "PASS wb_p0_post_chance_beam_completion\n";
+}
+
+void mulligan_crn_post_deck_coupling() {
+    const auto pool = neutral_bishop_rotation();
+    Deck valid_deck{};
+    int cursor = 0;
+    valid_deck[cursor++] = kCorrector; // singleton
+    for (CardId id : pool) {
+        if (id == kCorrector || !is_deck_card(id) || find_card(id)->kind == Kind::Faith) continue;
+        for (int c = 0; c < 3 && cursor < kDeckSize; ++c) valid_deck[cursor++] = id;
+        if (cursor == kDeckSize) break;
+    }
+    CHECK(cursor == kDeckSize);
+
+    auto base = new_game(valid_deck, valid_deck, 314159);
+    base.players[0].hand[0] = kCorrector;
+    base.players[0].hand[1] = valid_deck[1];
+    base.players[0].hand[2] = valid_deck[4];
+    base.players[0].hand[3] = valid_deck[7];
+
+    int coupled_m1 = 0;
+    int coupled_m15 = 0;
+    int returned_singleton_drawn_t1 = 0;
+    constexpr int kTrials = 256;
+
+    for (int t = 1; t <= kTrials; ++t) {
+        const std::uint64_t seed = 0xD1B54A32D192ED03ULL * static_cast<std::uint64_t>(t);
+        const auto r0 = simulate_mulligan_crn(base, 0, seed);
+        const auto r1 = simulate_mulligan_crn(base, 1, seed);
+        const auto r15 = simulate_mulligan_crn(base, 15, seed);
+
+        // Opponent hand/deck and post-mulligan RNG state must be 100% identical across all 16 masks
+        for (int mask = 1; mask < 16; ++mask) {
+            const auto rm = simulate_mulligan_crn(base, static_cast<std::uint8_t>(mask), seed);
+            CHECK(rm.turn1_state.rng_state == r0.turn1_state.rng_state);
+            CHECK(rm.turn1_state.players[1].hand == r0.turn1_state.players[1].hand);
+            CHECK(rm.turn1_state.players[1].deck == r0.turn1_state.players[1].deck);
+            CHECK(rm.turn1_state.players[0].hand_count == 5 && rm.turn1_state.players[0].deck_remaining() == 35);
+        }
+
+        // Turn-1 draw is hand[4] (5th card drawn at Turn 1 start)
+        const CardId draw_m0 = r0.turn1_state.players[0].hand[4];
+        const CardId draw_m1 = r1.turn1_state.players[0].hand[4];
+        const CardId draw_m15 = r15.turn1_state.players[0].hand[4];
+        if (draw_m1 == draw_m0) ++coupled_m1;
+        if (draw_m15 == draw_m0) ++coupled_m15;
+        if (draw_m1 == kCorrector) ++returned_singleton_drawn_t1;
+    }
+
+    // Theoretical coupling: 35/36 (~97.2%) for mask=1, >= 32/36 (~88.9%) for mask=15; old uncoupled was < 10%!
+    CHECK(coupled_m1 >= 235);  // > 91.8%
+    CHECK(coupled_m15 >= 210); // > 82.0%
+    // Returned singleton can still uniformly appear on Turn 1 (~1/36 = ~7.1 out of 256)
+    CHECK(returned_singleton_drawn_t1 <= 24);
+
+    std::cout << "PASS wb_mulligan_crn_post_deck_coupling\n";
+}
+
+int attention_microbench() {
+    auto model = svwb::attn::AttentionModel::random(20261125, svwb::attn::ArchVariant::V3GlobalEmbDiff);
+    auto witch = kMirrorDeck;
+    witch[0] = official(10832110);
+    witch[1] = official(10031310);
+    witch[2] = official(10131320);
+    const MatchupFeatures matchup(witch, kMirrorDeck);
+
+    struct BenchItem {
+        svwb::attn::RootContext ctx;
+        svwb::attn::CandidateFeatures feat;
+        svwb::attn::CandidateSparseDiff diff;
+    };
+    std::vector<BenchItem> items;
+    std::vector<GameState> turn_states;
+    items.reserve(1024);
+
+    std::mt19937 rng(7070);
+    for (int g = 0; g < 16 && items.size() < 800; ++g) {
+        auto state = new_game(g % 2 == 0 ? kMirrorDeck : witch, kMirrorDeck, 5000 + g);
+        apply_legal_action(state, {Mulligan});
+        apply_legal_action(state, {Mulligan});
+        Search search(model, model, rng, {8, false, true, true}, &matchup);
+        for (int t = 0; t < 16 && state.outcome == Outcome::Ongoing && items.size() < 800; ++t) {
+            turn_states.push_back(state);
+            const auto dec = search.choose(state, true);
+            if (!dec.attention_policy.empty()) {
+                svwb::attn::RootContext ctx{};
+                static_cast<void>(model.evaluate_root(extract_attention_tokens(state), ctx));
+                for (const auto& s : dec.attention_policy) {
+                    items.push_back({ctx, s.features, s.emb_diff});
+                }
+            }
+            state = dec.next;
+        }
+    }
+
+    // Verify numerical agreement between Method A (DirectMatMul) and Method B (PreprojectedTable)
+    float max_diff = 0.0F;
+    double mean_entries = 0.0;
+    for (const auto& it : items) {
+        const float a = model.policy_logit_direct(it.ctx, it.feat.data(), &it.diff);
+        const float b = model.policy_logit_preprojected(it.ctx, it.feat.data(), &it.diff);
+        max_diff = std::max(max_diff, std::abs(a - b));
+        mean_entries += it.diff.total_entries();
+    }
+    mean_entries /= static_cast<double>(items.size());
+    CHECK(max_diff < 1e-5F);
+
+    constexpr int kWarmup = 400;
+    constexpr int kRepeats = 5000;
+    volatile float sink = 0.0F;
+
+    for (int r = 0; r < kWarmup; ++r) {
+        float acc = 0.0F;
+        for (const auto& it : items) acc += model.policy_logit_direct(it.ctx, it.feat.data(), &it.diff);
+        sink = acc;
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    float sum_direct = 0.0F;
+    for (int r = 0; r < kRepeats; ++r) {
+        for (const auto& it : items) sum_direct += model.policy_logit_direct(it.ctx, it.feat.data(), &it.diff);
+    }
+    const auto t1 = std::chrono::steady_clock::now();
+    sink = sum_direct;
+
+    for (int r = 0; r < kWarmup; ++r) {
+        float acc = 0.0F;
+        for (const auto& it : items) acc += model.policy_logit_preprojected(it.ctx, it.feat.data(), &it.diff);
+        sink = acc;
+    }
+    const auto t2 = std::chrono::steady_clock::now();
+    float sum_preproj = 0.0F;
+    for (int r = 0; r < kRepeats; ++r) {
+        for (const auto& it : items) sum_preproj += model.policy_logit_preprojected(it.ctx, it.feat.data(), &it.diff);
+    }
+    const auto t3 = std::chrono::steady_clock::now();
+    sink = sum_preproj;
+    static_cast<void>(sink);
+
+    const double total_evals = static_cast<double>(kRepeats) * static_cast<double>(items.size());
+    const double direct_sec = std::chrono::duration<double>(t1 - t0).count();
+    const double preproj_sec = std::chrono::duration<double>(t3 - t2).count();
+    const double direct_ns = (direct_sec * 1e9) / total_evals;
+    const double preproj_ns = (preproj_sec * 1e9) / total_evals;
+
+    // Also measure end-to-end MCTS search turn latency (16 simulations) for both kernels
+    const auto bench_turn_search = [&](svwb::attn::PolicyScorerKernel kernel) {
+        model.set_scorer_kernel(kernel);
+        std::mt19937 srng(999);
+        Search s(model, model, srng, {16, false, false, true}, &matchup);
+        const auto s0 = std::chrono::steady_clock::now();
+        for (std::size_t i = 0; i < std::min<std::size_t>(turn_states.size(), 64); ++i) {
+            const auto d = s.choose(turn_states[i], false);
+            sink = static_cast<float>(d.visits);
+        }
+        const auto s1 = std::chrono::steady_clock::now();
+        return std::chrono::duration<double, std::milli>(s1 - s0).count() /
+               static_cast<double>(std::min<std::size_t>(turn_states.size(), 64));
+    };
+    const double turn_ms_direct = bench_turn_search(svwb::attn::PolicyScorerKernel::DirectMatMul);
+    const double turn_ms_preproj = bench_turn_search(svwb::attn::PolicyScorerKernel::PreprojectedTable);
+
+    std::cout << std::fixed << std::setprecision(2)
+              << "MICROBENCH candidates=" << items.size()
+              << " avg_sparse_diff_entries=" << mean_entries
+              << " total_evals=" << static_cast<std::uint64_t>(total_evals)
+              << " max_abs_diff=" << std::scientific << max_diff << std::fixed << '\n'
+              << "Method_A_DirectMatMul_ns_per_cand=" << direct_ns
+              << " cands_per_sec=" << (total_evals / direct_sec)
+              << " search16_ms_per_turn=" << turn_ms_direct << '\n'
+              << "Method_B_Preprojected_ns_per_cand=" << preproj_ns
+              << " cands_per_sec=" << (total_evals / preproj_sec)
+              << " search16_ms_per_turn=" << turn_ms_preproj
+              << " speedup_x=" << (direct_ns / preproj_ns) << '\n';
+    return 0;
+}
+
 int dump_attention_parity(const std::filesystem::path& weights_path, const std::filesystem::path& out_path) {
     const auto model = svwb::attn::AttentionModel::load(weights_path);
     auto witch = kMirrorDeck;
@@ -3462,15 +4395,157 @@ int dump_attention_parity(const std::filesystem::path& weights_path, const std::
     const MatchupFeatures matchup(witch, kMirrorDeck);
 
     struct Record {
-        svwb::attn::Tokens tokens;
-        float value_logit;
-        float value_prob;
-        std::int32_t candidate_count;
-        std::array<svwb::attn::CandidateFeatures, svwb::kMaxCandidates> candidates;
-        std::array<float, svwb::kMaxCandidates> policy_logits;
+        svwb::attn::Tokens tokens{};
+        std::array<float, svwb::attn::kModel> global_cls_init{};
+        std::array<float, svwb::attn::kCardTokens * svwb::attn::kModel> token_proj{};
+        std::array<float, svwb::attn::kModel> final_cls{};
+        float value_logit = 0.0F;
+        float value_prob = 0.5F;
+        std::int32_t candidate_count = 0;
+        std::array<svwb::attn::CandidateFeatures, svwb::kMaxCandidates> candidates{};
+        std::array<std::array<std::uint16_t, svwb::attn::kMaxSparseDiffEntries>, svwb::kMaxCandidates> diff_ids{};
+        std::array<std::array<std::int8_t, svwb::attn::kMaxSparseDiffEntries>, svwb::kMaxCandidates> diff_signs{};
+        std::array<std::array<std::uint8_t, svwb::attn::kDiffZones + 1>, svwb::kMaxCandidates> zone_counts{};
+        std::array<svwb::attn::CandidateEmbDiff, svwb::kMaxCandidates> embdiff_dense{};
+        std::array<std::array<float, svwb::attn::kPolicyHidden>, svwb::kMaxCandidates> policy_h1{};
+        std::array<float, svwb::kMaxCandidates> policy_logits{};
+    };
+
+    const auto pack_record = [&](const GameState& root_state,
+                                 std::span<const svwb::attn::CandidateFeatures> c_feats,
+                                 std::span<const svwb::attn::CandidateSparseDiff> c_diffs) {
+        Record rec{};
+        rec.tokens = extract_attention_tokens_for(root_state, model);
+        svwb::attn::DebugStageOutputs dbg{};
+        model.debug_encode(rec.tokens, dbg);
+        rec.global_cls_init = dbg.global_cls_init;
+        rec.token_proj = dbg.token_proj;
+        rec.final_cls = dbg.final_cls;
+        rec.value_logit = dbg.value_logit;
+        rec.value_prob = dbg.value_prob;
+
+        svwb::attn::RootContext ctx{};
+        const float eval_p = model.evaluate_root(rec.tokens, ctx);
+        CHECK(std::abs(eval_p - rec.value_prob) < 1e-6F);
+
+        rec.candidate_count = static_cast<std::int32_t>(
+            std::min<std::size_t>(c_feats.size(), svwb::kMaxCandidates));
+        for (int k = 0; k < rec.candidate_count; ++k) {
+            rec.candidates[k] = c_feats[k];
+            const auto& sp = c_diffs[k];
+            int total = 0;
+            for (int z = 0; z < svwb::attn::kDiffZones; ++z) {
+                const int b = sp.zone_offsets[z];
+                const int e = sp.zone_offsets[z + 1];
+                const int zc = e - b;
+                rec.zone_counts[k][z] = static_cast<std::uint8_t>(zc);
+                const int base_off = svwb::attn::kZoneDiffSliceOffsets[z];
+                for (int j = 0; j < zc; ++j) {
+                    rec.diff_ids[k][base_off + j] = sp.entries[b + j].vocab_id;
+                    rec.diff_signs[k][base_off + j] = sp.entries[b + j].signed_count;
+                }
+                total += zc;
+            }
+            rec.zone_counts[k][svwb::attn::kDiffZones] = static_cast<std::uint8_t>(total);
+            model.debug_policy(ctx, rec.candidates[k].data(), &sp,
+                               rec.embdiff_dense[k], rec.policy_h1[k], rec.policy_logits[k]);
+        }
+        return rec;
     };
 
     std::vector<Record> records;
+
+    // Add all 8 mandatory boundary test cases explicitly (Spec 4.4 / AC-D-4):
+    // (1) Multiple copies of same card in hand + (3) Empty diff (full pass) + (4) Normal evolve + (5) Super evolve
+    {
+        Scenario s;
+        s.state.turn_number = 7;
+        s.player(0).pp = s.player(0).max_pp = 10;
+        s.player(0).ep = 1;
+        s.player(0).sep = 1;
+        s.hand({kLilium, kLilium, kLilium, kTrainer});
+        s.place(kTrainer, 0);
+        s.place(kColette, 1);
+
+        std::vector<svwb::attn::CandidateFeatures> feats;
+        std::vector<svwb::attn::CandidateSparseDiff> diffs;
+        // Pass (empty diff)
+        {
+            auto next = s.state;
+            apply_legal_action(next, {EndTurn});
+            feats.push_back(extract_candidate_features(s.state, s.state, next));
+            diffs.push_back(extract_candidate_sparse_diff(s.state, s.state));
+        }
+        // Normal evolve
+        {
+            auto dec = s.state;
+            apply_legal_action(dec, {Evolve, 0});
+            auto next = dec;
+            apply_legal_action(next, {EndTurn});
+            feats.push_back(extract_candidate_features(s.state, dec, next));
+            diffs.push_back(extract_candidate_sparse_diff(s.state, dec));
+        }
+        // Super evolve
+        {
+            auto dec = s.state;
+            apply_legal_action(dec, {SuperEvolve, 0});
+            auto next = dec;
+            apply_legal_action(next, {EndTurn});
+            feats.push_back(extract_candidate_features(s.state, dec, next));
+            diffs.push_back(extract_candidate_sparse_diff(s.state, dec));
+        }
+        // Play 1 copy of 3-copy kLilium
+        {
+            auto dec = s.state;
+            apply_legal_action(dec, {Play, 0});
+            auto next = dec;
+            apply_legal_action(next, {EndTurn});
+            feats.push_back(extract_candidate_features(s.state, dec, next));
+            diffs.push_back(extract_candidate_sparse_diff(s.state, dec));
+        }
+        records.push_back(pack_record(s.state, feats, diffs));
+    }
+
+    // (2) Consume 1 copy + draw 1 copy of same card + (6) Transform + (7) Crest disappearance + (8) Random draw
+    {
+        Scenario s;
+        s.state.turn_number = 7;
+        s.player(0).pp = s.player(0).max_pp = 10;
+        s.hand({kEvidence, official(10031310), kTrainer});
+        s.player(0).deck[0] = kEvidence;
+        s.player(0).deck[1] = kLilium;
+        s.player(0).deck_idx = 0;
+        s.player(0).deck_end = 2;
+        s.place(kColette, 1);
+        s.crest(CrestId::Testimony, 1, 0);
+
+        std::vector<svwb::attn::CandidateFeatures> feats;
+        std::vector<svwb::attn::CandidateSparseDiff> diffs;
+        // Consume 1 kEvidence + draw 1 kEvidence (net 0 for kEvidence in hand!)
+        {
+            auto dec = s.state;
+            apply_legal_action(dec, {Play, 0}); // plays kEvidence -> board
+            apply_legal_action(dec, {Act, 0});  // acts kEvidence -> draws deck[0]==kEvidence & destroys board kEvidence!
+            auto next = dec;
+            apply_legal_action(next, {EndTurn});
+            feats.push_back(extract_candidate_features(s.state, dec, next));
+            diffs.push_back(extract_candidate_sparse_diff(s.state, dec));
+        }
+        // Transform enemy permanent + Crest disappearance + Random draw
+        {
+            auto dec = s.state;
+            dec.players[1].board[0].card_id = kRabbit; // transformed on board
+            dec.players[0].crest_count = 0;            // crest disappeared before EndTurn
+            apply_legal_action(dec, {Play, 1});        // Insight random draw
+            auto next = dec;
+            apply_legal_action(next, {EndTurn});
+            feats.push_back(extract_candidate_features(s.state, dec, next));
+            diffs.push_back(extract_candidate_sparse_diff(s.state, dec));
+        }
+        records.push_back(pack_record(s.state, feats, diffs));
+    }
+
+    // Full-game positions across multiple matchups
     std::mt19937 rng(20261124);
     for (int game_idx = 0; game_idx < 6 && records.size() < 32; ++game_idx) {
         auto state = new_game(game_idx % 2 == 0 ? kMirrorDeck : witch, kMirrorDeck, 1000 + game_idx);
@@ -3489,18 +4564,13 @@ int dump_attention_parity(const std::filesystem::path& weights_path, const std::
             const auto decision = search.choose(state, true);
             if (!decision.forced && !decision.attention_policy.empty()) {
                 const auto& root_state = decision.sampled_root ? *decision.sampled_root : state;
-                Record rec{};
-                rec.tokens = extract_attention_tokens(root_state);
-                svwb::attn::RootContext ctx{};
-                rec.value_prob = model.evaluate_root(rec.tokens, ctx);
-                rec.value_logit = model.value_logit(rec.tokens);
-                rec.candidate_count = static_cast<std::int32_t>(
-                    std::min<std::size_t>(decision.attention_policy.size(), svwb::kMaxCandidates));
-                for (int k = 0; k < rec.candidate_count; ++k) {
-                    rec.candidates[k] = decision.attention_policy[k].features;
-                    rec.policy_logits[k] = model.policy_logit(ctx, rec.candidates[k].data());
+                std::vector<svwb::attn::CandidateFeatures> c_feats;
+                std::vector<svwb::attn::CandidateSparseDiff> c_diffs;
+                for (const auto& s : decision.attention_policy) {
+                    c_feats.push_back(s.features);
+                    c_diffs.push_back(s.emb_diff);
                 }
-                records.push_back(rec);
+                records.push_back(pack_record(root_state, c_feats, c_diffs));
             }
             for (const auto action : decision.actions) {
                 if (!apply_action(state, action)) break;
@@ -3511,21 +4581,21 @@ int dump_attention_parity(const std::filesystem::path& weights_path, const std::
             }
         }
     }
-    CHECK(records.size() >= 16);
+    CHECK(records.size() >= 24);
     std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
     CHECK(static_cast<bool>(out));
-    const auto count = static_cast<std::int32_t>(records.size());
-    out.write(reinterpret_cast<const char*>(&count), sizeof(count));
+    const std::array<std::int32_t, 4> hdr{
+        static_cast<std::int32_t>(records.size()),
+        model.global_dim(),
+        svwb::attn::kCandidateDim,
+        model.candidate_embdiff_dim(),
+    };
+    out.write(reinterpret_cast<const char*>(hdr.data()), sizeof(hdr));
     for (const auto& rec : records) {
-        out.write(reinterpret_cast<const char*>(&rec.tokens), sizeof(rec.tokens));
-        out.write(reinterpret_cast<const char*>(&rec.value_logit), sizeof(rec.value_logit));
-        out.write(reinterpret_cast<const char*>(&rec.value_prob), sizeof(rec.value_prob));
-        out.write(reinterpret_cast<const char*>(&rec.candidate_count), sizeof(rec.candidate_count));
-        out.write(reinterpret_cast<const char*>(rec.candidates.data()), sizeof(rec.candidates));
-        out.write(reinterpret_cast<const char*>(rec.policy_logits.data()), sizeof(rec.policy_logits));
+        out.write(reinterpret_cast<const char*>(&rec), sizeof(rec));
     }
     out.close();
-    std::cout << "Dumped " << records.size() << " attention parity positions\n";
+    std::cout << "Dumped " << records.size() << " attention 3-stage parity positions\n";
     return 0;
 }
 
@@ -3576,6 +4646,7 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--rotation-registry") return verify_rotation_registry();
     if (argc == 2 && std::string_view(argv[1]) == "--full-rotation-stress")
         return stress_rotation(all_rotation(), 10'000, 0x35364234ULL, "full_rotation_mirror");
+    if (argc == 2 && std::string_view(argv[1]) == "--attention-microbench") return attention_microbench();
     if (argc == 2) {
         const std::string_view mode(argv[1]);
         try {
@@ -3584,6 +4655,17 @@ int main(int argc, char** argv) {
             else if (mode == "--canonicalization") search_canonicalization();
             else if (mode == "--forced-lethal") search_forced_lethal();
             else if (mode == "--determinization") determinization_audit();
+            else if (mode == "--mcts-backup") mcts_root_perspective_backup();
+            else if (mode == "--mulligan-crn") mulligan_crn_and_exclusion();
+            else if (mode == "--hidden-invariance") attention_hidden_state_invariance();
+            else if (mode == "--strategy-fusion") mcts_strategy_fusion_expected_value();
+            else if (mode == "--hidden-pool") attention_hidden_pool_consistency();
+            else if (mode == "--opponent-isolation") attention_opponent_private_info_isolation();
+            else if (mode == "--stochastic-lethal") attention_stochastic_lethal_not_forced();
+            else if (mode == "--global64-unit") attention_global64_turn_boundaries();
+            else if (mode == "--embdiff-migration-unit") attention_embdiff160_and_migration();
+            else if (mode == "--post-chance-beam") p0_post_chance_beam_completion();
+            else if (mode == "--mulligan-crn-coupling") mulligan_crn_post_deck_coupling();
             else if (mode == "--high-cost-unit") {
                 high_cost_cards();
                 high_cost_combat();

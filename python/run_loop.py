@@ -28,8 +28,8 @@ from plot_metrics import plot_metrics
 from match_runner import invoke, seat_win_rates, win_counters
 from run_storage import publish_checkpoint, replace_file
 from train import (
-    ATTN_WEIGHT_BYTES, WEIGHT_BYTES, generation_dir,
-    initialize_attention_checkpoint, initialize_checkpoint, pick_device, train_generation,
+    WEIGHT_BYTES, generation_dir, initialize_attention_checkpoint, initialize_checkpoint,
+    migrate_attention_v2_to_v3, pick_device, train_generation, validate_attention_weights_file,
 )
 
 
@@ -117,6 +117,12 @@ def config_for(args):
     result = {key: getattr(args, key) for key in keys}
     if getattr(args, "model_type", "mlp") == "attention":
         result["model_type"] = "attention"
+        result["attention_variant"] = getattr(args, "attention_variant", "v3-gd")
+    if getattr(args, "init_from_v2", None) is not None:
+        result["init_from_v2"] = {
+            "file": str(args.init_from_v2),
+            "sha256": hashlib.sha256(args.init_from_v2.read_bytes()).hexdigest(),
+        }
     if getattr(args, "learning_rate", None) is not None:
         result["learning_rate"] = args.learning_rate
     if getattr(args, "weight_decay", None) is not None:
@@ -159,7 +165,16 @@ def initialize_run(args, device):
     if not initial.exists():
         with tempfile.TemporaryDirectory(prefix=".initial-", dir=output, ignore_cleanup_errors=True) as staging:
             if getattr(args, "model_type", "mlp") == "attention":
-                initialize_attention_checkpoint(Path(staging), args.seed)
+                if getattr(args, "init_from_v2", None) is not None:
+                    migrate_attention_v2_to_v3(
+                        args.init_from_v2, Path(staging),
+                        target_variant=getattr(args, "attention_variant", "v3-gd"),
+                        generation=0,
+                    )
+                else:
+                    initialize_attention_checkpoint(
+                        Path(staging), args.seed, variant=getattr(args, "attention_variant", "v3-gd")
+                    )
             else:
                 initialize_checkpoint(Path(staging), args.seed)
             publish_checkpoint(Path(staging), initial)
@@ -193,8 +208,9 @@ def verify_checkpoint(directory, generation, rules, model_type="mlp"):
     if model_type == "attention":
         for name in ("attn_weights.bin", "weights.bin"):
             weights = directory / name
-            if not weights.is_file() or weights.stat().st_size != ATTN_WEIGHT_BYTES:
-                raise ValueError(f"Invalid attention checkpoint weights: {weights}")
+            if not weights.is_file():
+                raise ValueError(f"Missing attention checkpoint weights: {weights}")
+            validate_attention_weights_file(weights)
     else:
         weights = directory / "weights.bin"
         if not weights.is_file() or weights.stat().st_size != WEIGHT_BYTES:
@@ -231,7 +247,11 @@ def run_generation(args, generation, rows, device):
                 *limits, "--threads", args.threads, "--simulations", args.simulations, "--seed", seed,
                 *deck_args, "--weights", previous / w_file, *snapshot_flags, "--log-dir", work,
             ])
-            valid_schemas = ("wb-attention-v1",) if getattr(args, "model_type", "mlp") == "attention" else ("wb-mirror-v2", "wb-matchup-v2")
+            valid_schemas = (
+                ("wb-attention-v3", "wb-attention-v3-g", "wb-attention-v1")
+                if getattr(args, "model_type", "mlp") == "attention"
+                else ("wb-mirror-v2", "wb-matchup-v2")
+            )
             if args.rules == "wb" and counters.get("feature_schema") not in valid_schemas:
                 raise RuntimeError("The WB executable returned an unexpected feature schema")
             for filename in LOG_FILES:
@@ -268,6 +288,8 @@ def run_generation(args, generation, rows, device):
             "evaluation_games": args.eval_games, "selfplay_games": selfplay_games,
             "snapshot_games": snapshot_games, "snapshot_source": snapshot_source,
             "selfplay_deck_a_win_rate": selfplay_stats["A_wins"] / selfplay_games,
+            "selfplay_both_lose": selfplay_stats["draws"],
+            "selfplay_both_lose_rate": selfplay_stats["draws"] / selfplay_games,
             "information_mode": counters.get("information", "legacy"),
             **seat_win_rates(selfplay_stats, "selfplay"),
             "selfplay_seconds": float(counters["wall_seconds"]),
@@ -279,6 +301,7 @@ def run_generation(args, generation, rows, device):
             row[f"{name}_win_rate"] = stats["A_wins"] / stats["games"]
             row[f"{name}_wins"] = stats["A_wins"]
             row[f"{name}_draws"] = stats["draws"]
+            row[f"{name}_both_lose_rate"] = stats["draws"] / stats["games"]
             row.update(seat_win_rates(stats, name))
         row["converged"] = converged([*rows, row], args.minimum_convergence, args.rules)
         write_json(stage / "metrics.json", row)
@@ -326,6 +349,10 @@ def parse_args():
     parser.add_argument("--perfect-information", action="store_true",
                         help="Use the previous WB search that sees all cards")
     parser.add_argument("--model-type", choices=("mlp", "attention"), default="mlp")
+    parser.add_argument("--attention-variant", choices=("v2", "v3-g", "v3-gd"), default="v3-gd",
+                        help="Attention architecture variant when initializing or migrating")
+    parser.add_argument("--init-from-v2", type=Path,
+                        help="Warm-start generation 0 by migrating a Legacy v2 weights/checkpoint file")
     args = parser.parse_args()
     custom_decks = args.deck_a is not None or args.deck_b is not None
     if custom_decks and args.rules == "legacy":
@@ -337,7 +364,7 @@ def parse_args():
         parser.error("--perfect-information requires WB rules")
     if custom_decks and args.output_dir is None:
         parser.error("Specify --output-dir for a custom deck run")
-    for key in ("deck_a", "deck_b", "baseline_weights"):
+    for key in ("deck_a", "deck_b", "baseline_weights", "init_from_v2"):
         path = getattr(args, key)
         if path is not None:
             setattr(args, key, path.resolve(strict=True))

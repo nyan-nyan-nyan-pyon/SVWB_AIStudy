@@ -62,6 +62,34 @@ enum class Evolution : std::uint8_t { None, Normal, Super };
 enum class Phase : std::uint8_t { Mulligan, Main };
 enum class Outcome : std::uint8_t { Ongoing, FirstWins, SecondWins, BothLose };
 enum class EndReason : std::uint8_t { None, Health, EmptyDeck, TurnLimit };
+enum class LethalStatus : std::uint8_t {
+    Proven,         // Deterministic win from public state and own initial hand only.
+    Probabilistic,  // Wins in sample, but crossed unresolved draw/random/deck-out boundary.
+    Possible,       // Wins under specific hidden-information/unobserved-card conditions.
+    NotFound,       // No lethal verified within search budget.
+};
+
+struct LethalEvidence {
+    bool crossed_unresolved_chance = false;
+    bool depends_on_hidden_information = false;
+    bool used_unobserved_card = false;
+    bool terminal_win_verified = false;
+
+    [[nodiscard]] constexpr bool is_proven() const noexcept {
+        return terminal_win_verified && !crossed_unresolved_chance &&
+               !depends_on_hidden_information && !used_unobserved_card;
+    }
+
+    constexpr LethalEvidence& merge(const LethalEvidence& step) noexcept {
+        crossed_unresolved_chance |= step.crossed_unresolved_chance;
+        depends_on_hidden_information |= step.depends_on_hidden_information;
+        used_unobserved_card |= step.used_unobserved_card;
+        terminal_win_verified = step.terminal_win_verified;
+        return *this;
+    }
+
+    bool operator==(const LethalEvidence&) const = default;
+};
 enum class CrestId : std::uint8_t {
     None, Testimony, Rituel, Rapid, Haylem, Erralde, Kukishiro, Sisters,
     Shrink, Expand, Dustdays, DeerKing, Beasts, Unkei, March, Gildaria, Almerize,
@@ -273,6 +301,10 @@ private:
 void apply_legal_action(GameState& state, Action action, const RuleConfig& rules = {});
 // True if the action resolved without relying on hidden card identities or a random choice.
 [[nodiscard]] bool apply_observed_action(GameState& state, Action action, const RuleConfig& rules = {});
+[[nodiscard]] LethalStatus classify_lethal(const LethalEvidence& evidence) noexcept;
+[[nodiscard]] LethalEvidence apply_action_with_evidence(GameState& state, Action action, int observer,
+                                                        std::uint16_t* unobserved_hand_mask = nullptr,
+                                                        const RuleConfig& rules = {});
 [[nodiscard]] bool can_choose_enemy_permanent(const Permanent& object);
 [[nodiscard]] bool follower_fanfare_suppressed(const PlayerState& player);
 [[nodiscard]] inline bool attack_ready(const Permanent& object) {

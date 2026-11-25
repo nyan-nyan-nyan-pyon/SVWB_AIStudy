@@ -41,6 +41,10 @@ struct MatchOptions {
     bool opponent_perfect_information = false;
     attn::ModelType model_type = attn::ModelType::Mlp;
     std::optional<attn::ModelType> opponent_model_type;
+    std::optional<SearchVersion> opponent_search_version;
+    bool paired_seeds = false;
+    attn::ArchVariant attention_variant = attn::ArchVariant::V3GlobalEmbDiff;
+    std::filesystem::path outcomes_json;
 };
 
 void run_match(const MatchOptions& options);

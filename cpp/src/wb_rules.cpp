@@ -560,8 +560,12 @@ const std::array<Effect, kEffectSlots>& script(const Ability& ability) {
 
 class Resolver {
 public:
-    Resolver(GameState& state, const RuleConfig& rules, bool* certain = nullptr)
-        : state_(state), rules_(rules), certain_(certain), observer_(state.turn_player) {}
+    Resolver(GameState& state, const RuleConfig& rules, bool* certain = nullptr,
+             LethalEvidence* evidence = nullptr, std::uint16_t* unobserved_hand_mask = nullptr,
+             int observer = -1)
+        : state_(state), rules_(rules), certain_(certain), evidence_(evidence),
+          unobserved_hand_mask_(unobserved_hand_mask),
+          observer_(observer >= 0 ? observer : state.turn_player) {}
 
     void play(Action action);
     void manual_evolve(Action action);
@@ -573,11 +577,52 @@ public:
     void immediate(int owner, std::span<const Effect> effects, EntityId source, EntityId target);
 
 private:
-    void uncertain() const {
+    void mark_chance() const {
         if (certain_) *certain_ = false;
+        if (evidence_) evidence_->crossed_unresolved_chance = true;
+    }
+    void mark_hidden() const {
+        if (certain_) *certain_ = false;
+        if (evidence_) evidence_->depends_on_hidden_information = true;
+    }
+    void mark_unobserved_card() const {
+        if (certain_) *certain_ = false;
+        if (evidence_) evidence_->used_unobserved_card = true;
+    }
+    void uncertain() const {
+        mark_chance();
+        mark_hidden();
+    }
+    bool has_unobserved_hand(int seat) const {
+        return seat == observer_ && unobserved_hand_mask_ && *unobserved_hand_mask_ != 0;
+    }
+    bool slot_is_unobserved(int seat, int slot) const {
+        return seat == observer_ && unobserved_hand_mask_ && slot >= 0 && slot < kHandLimit &&
+               ((*unobserved_hand_mask_ & static_cast<std::uint16_t>(1U << slot)) != 0);
+    }
+    void add_unobserved_card(int seat, CardId id, CardModifiers modifiers = {}) {
+        auto& side = state_.players[seat];
+        if (seat == observer_) {
+            if (side.hand_count == kHandLimit) {
+                mark_unobserved_card();
+            } else if (unobserved_hand_mask_) {
+                *unobserved_hand_mask_ |= static_cast<std::uint16_t>(1U << side.hand_count);
+            }
+        }
+        add_card(side, id, modifiers);
+    }
+    void erase_player_hand(int seat, int slot) {
+        if (seat == observer_ && unobserved_hand_mask_ && slot >= 0 && slot < kHandLimit) {
+            const auto bit = static_cast<std::uint16_t>(1U << slot);
+            if ((*unobserved_hand_mask_ & bit) != 0) mark_unobserved_card();
+            const auto low = static_cast<std::uint16_t>(*unobserved_hand_mask_ & (bit - 1U));
+            const auto high = static_cast<std::uint16_t>((*unobserved_hand_mask_ >> 1) & ~(bit - 1U));
+            *unobserved_hand_mask_ = static_cast<std::uint16_t>(low | high);
+        }
+        erase_hand(state_.players[seat], slot);
     }
     int pick_index(int count) {
-        if (count > 1) uncertain();
+        if (count > 1) mark_chance();
         return random_index(state_, count);
     }
     void enqueue(Ability ability);
@@ -620,6 +665,8 @@ private:
     GameState& state_;
     const RuleConfig& rules_;
     bool* certain_;
+    LethalEvidence* evidence_;
+    std::uint16_t* unobserved_hand_mask_;
     int observer_;
     std::vector<Ability> waiting_;
     std::vector<Ability> triggered_;
@@ -958,10 +1005,18 @@ void Resolver::run_steps(const Ability& ability, std::span<const Effect> effects
     auto& player = state_.players[ability.source.seat];
     bool paid = false;
     const auto conditions = [&](const Effect& step) {
-        if (step.condition == Condition::NoDeckDuplicates || step.condition == Condition::HasDeckDuplicates ||
-            (ability.source.seat != observer_ && (step.operation == Operation::DiscardEvidence ||
-             step.condition == Condition::HandSpells || step.condition == Condition::CostMultiplicity))) {
-            uncertain();
+        if (step.condition == Condition::NoDeckDuplicates || step.condition == Condition::HasDeckDuplicates) {
+            mark_hidden();
+        }
+        if (step.operation == Operation::DiscardEvidence ||
+            step.condition == Condition::HandSpells || step.condition == Condition::CostMultiplicity) {
+            if (ability.source.seat != observer_) {
+                mark_hidden();
+                mark_chance();
+            } else if (has_unobserved_hand(ability.source.seat)) {
+                mark_unobserved_card();
+                mark_hidden();
+            }
         }
         return condition_met(state_, step, ability, paid, rules_);
     };
@@ -1268,17 +1323,24 @@ void Resolver::keep_drawn(int seat, CardId card, CardModifiers modifiers, int di
         modifiers.temporary_cost_delta = static_cast<std::int8_t>(std::clamp(def.drawn_cost - base, -127, 127));
     }
     const bool kept = player.hand_count < kHandLimit;
-    add_card(player, card, modifiers);
+    add_unobserved_card(seat, card, modifiers);
     if (kept) {
+        const auto before_triggered = triggered_.size();
         Ability event{OnDraw};
         event.event_cost = drawn_cost;
         broadcast(seat, event);
+        if (triggered_.size() != before_triggered) {
+            mark_unobserved_card();
+        }
     }
 }
 
 int Resolver::draw_cards(int seat, int amount, DeckFilter filter, int discount) {
     auto& player = state_.players[seat];
-    if (amount > 0 && player.deck_remaining() > 0) uncertain();
+    if (amount > 0) {
+        mark_chance();
+        if (player.deck_remaining() > 0) mark_hidden();
+    }
     int last_cost = -1;
     for (int i = 0; i < amount && state_.outcome == Outcome::Ongoing; ++i) {
         int slot = player.deck_idx;
@@ -1302,12 +1364,12 @@ int Resolver::draw_cards(int seat, int amount, DeckFilter filter, int discount) 
 }
 
 void Resolver::discard(int seat, int slot) {
-    if (seat != observer_) uncertain();
+    if (seat != observer_) mark_hidden();
     auto& player = state_.players[seat];
     const auto id = player.hand[slot];
     Ability ability{OnDiscard, Origin::Spell, {seat}, id};
     ability.effective_cost = card_cost(definition(id), player.hand_modifiers[slot]);
-    erase_hand(player, slot);
+    erase_player_hand(seat, slot);
     ++player.shadows;
     enqueue(ability);
 }
@@ -1690,11 +1752,11 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
             for (int slot = player.hand_count - 1; slot >= 0; --slot) {
                 if (!(ability.selection & (1 << slot))) continue;
                 return_to_deck(state_, player, player.hand[slot], player.hand_modifiers[slot]);
-                erase_hand(player, slot);
+                erase_player_hand(owner, slot);
             }
         } else if (hand_slot >= 0 && hand_slot < player.hand_count) {
             return_to_deck(state_, player, player.hand[hand_slot], player.hand_modifiers[hand_slot]);
-            erase_hand(player, hand_slot);
+            erase_player_hand(owner, hand_slot);
         } else if (const auto* object = find(state_, target)) {
             if (!object->silenced && definition(object->card_id).banish_when_leaving) {
                 banish(target);
@@ -1764,6 +1826,7 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
     case TransformNamed:
         for (int i = 0; i < player.hand_count; ++i) {
             if (player.hand[i] != step.card) continue;
+            if (slot_is_unobserved(owner, i)) mark_unobserved_card();
             player.hand[i] = step.alternate_card;
             player.hand_modifiers[i] = {};
         }
@@ -1792,7 +1855,12 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
         break;
     case Copy:
         if (hand_slot >= 0 && hand_slot < player.hand_count) {
-            add_card(player, player.hand[hand_slot], player.hand_modifiers[hand_slot]);
+            if (slot_is_unobserved(owner, hand_slot)) {
+                mark_unobserved_card();
+                add_unobserved_card(owner, player.hand[hand_slot], player.hand_modifiers[hand_slot]);
+            } else {
+                add_card(player, player.hand[hand_slot], player.hand_modifiers[hand_slot]);
+            }
         } else if (const auto* object = find(state_, target)) {
             copy_board(owner, *object);
         }
@@ -1957,6 +2025,9 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
     case Spellboost:
         for (int i = 0; i < player.hand_count; ++i) {
             if (step.target == Target::ChosenBoostedHand && i != hand_slot) continue;
+            if (slot_is_unobserved(owner, i) && definition(player.hand[i]).spellboost) {
+                mark_unobserved_card();
+            }
             boost_card(definition(player.hand[i]), player.hand_modifiers[i], amount);
         }
         break;
@@ -1979,7 +2050,7 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
         const int count = player.hand_count;
         while (player.hand_count) {
             return_to_deck(state_, player, player.hand[0], player.hand_modifiers[0]);
-            erase_hand(player, 0);
+            erase_player_hand(owner, 0);
         }
         draw_cards(owner, count);
         break;
@@ -2038,6 +2109,10 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
             }
             break;
         }
+        if (has_unobserved_hand(owner)) {
+            mark_unobserved_card();
+            mark_hidden();
+        }
         int lowest = std::numeric_limits<int>::max();
         std::array<int, kHandLimit> candidates{};
         int count = 0;
@@ -2051,7 +2126,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
                 candidates[count++] = i;
             }
         }
-        erase_hand(player, candidates[pick_index(count)]);
+        erase_player_hand(owner, candidates[pick_index(count)]);
         evolve(target, Evolution::Normal, false);
         break;
     }
@@ -2109,7 +2184,11 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
         }
         break;
     case CardHandler::TopHandCosts:
-        if (opponent.hand_count > 0) uncertain();
+        if (opponent.hand_count > 0) mark_hidden();
+        if (has_unobserved_hand(owner)) {
+            mark_unobserved_card();
+            mark_hidden();
+        }
         if (hand_cost_sum(player) > hand_cost_sum(opponent)) primitive(Operation::Destroy, Target::AllEnemyFollowers);
         break;
     case CardHandler::ReplaceHandFromEnemyDeck:
@@ -2118,6 +2197,9 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
             const int slot = opponent.deck_idx + pick_index(opponent.deck_remaining());
             player.hand[hand_slot] = opponent.deck[slot];
             player.hand_modifiers[hand_slot] = opponent.deck_modifiers[slot];
+            if (owner == observer_ && unobserved_hand_mask_) {
+                *unobserved_hand_mask_ |= static_cast<std::uint16_t>(1U << hand_slot);
+            }
         }
         break;
     case CardHandler::CopyEnemyHand:
@@ -2126,7 +2208,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
             const int slot = pick_index(opponent.hand_count);
             auto modifiers = opponent.hand_modifiers[slot];
             modifiers.cost = static_cast<std::int8_t>(std::max(-127, modifiers.cost - step.amount));
-            add_card(player, opponent.hand[slot], modifiers);
+            add_unobserved_card(owner, opponent.hand[slot], modifiers);
         }
         break;
     case CardHandler::DiscardThenCopy:
@@ -2134,7 +2216,12 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
             if (ability.selection & (1 << i)) discard(owner, i);
         }
         for (int i = 0, count = std::min(3, static_cast<int>(player.hand_count)); i < count; ++i) {
-            add_card(player, player.hand[i], player.hand_modifiers[i]);
+            if (slot_is_unobserved(owner, i)) {
+                mark_unobserved_card();
+                add_unobserved_card(owner, player.hand[i], player.hand_modifiers[i]);
+            } else {
+                add_card(player, player.hand[i], player.hand_modifiers[i]);
+            }
         }
         break;
     case CardHandler::DrawDiscounted:
@@ -2149,6 +2236,10 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
     }
     case CardHandler::NeutralHandDamage:
     case CardHandler::AmuletHandDamage: {
+        if (has_unobserved_hand(owner)) {
+            mark_unobserved_card();
+            mark_hidden();
+        }
         const auto filter = step.handler == CardHandler::NeutralHandDamage ? DeckFilter::Neutral : DeckFilter::Amulet;
         const int count = static_cast<int>(std::count_if(player.hand.begin(), player.hand.begin() + player.hand_count,
             [&](CardId id) { return deck_filter(definition(id), filter); }));
@@ -2212,7 +2303,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
         for (int i = 0; i < step.amount && player.hand_count > 0; ++i) {
             const int slot = pick_index(player.hand_count);
             return_to_deck(state_, player, player.hand[slot], player.hand_modifiers[slot]);
-            erase_hand(player, slot);
+            erase_player_hand(owner, slot);
         }
         break;
     case CardHandler::BuddingBuddies:
@@ -2226,7 +2317,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
         for (int i = 0; i < remaining; ++i) slots[i] = opponent.deck_idx + i;
         for (int i = 0; i < std::min(step.amount, remaining); ++i) {
             std::swap(slots[i], slots[i + pick_index(remaining - i)]);
-            add_card(player, opponent.deck[slots[i]], opponent.deck_modifiers[slots[i]]);
+            add_unobserved_card(owner, opponent.deck[slots[i]], opponent.deck_modifiers[slots[i]]);
         }
         break;
     }
@@ -2514,7 +2605,7 @@ void Resolver::custom_effect(const Ability& ability, const Effect& step, Ref tar
         const auto id = player.hand[slot];
         if (definition(id).kind == Kind::Follower && definition(id).class_name == "エルフ") {
             const auto modifiers = player.hand_modifiers[slot];
-            erase_hand(player, slot);
+            erase_player_hand(owner, slot);
             enter(owner, id, modifiers);
         }
         break;
@@ -2649,7 +2740,7 @@ void Resolver::play(Action action) {
         selection = (selection & below) | ((selection >> 1) & ~below);
     }
     spend(player, payment.cost);
-    erase_hand(player, action.src);
+    erase_player_hand(seat, action.src);
     for (int slot = 0; slot < player.hand_count; ++slot) {
         const int discount = definition(player.hand[slot]).hand_play_discount;
         if (discount) modify_hand_cost(player.hand_modifiers[slot], -discount, true);
@@ -2661,6 +2752,9 @@ void Resolver::play(Action action) {
     if (payment.form.kind == Kind::Spell) {
         ++player.shadows;
         for (int i = 0; i < player.hand_count; ++i) {
+            if (slot_is_unobserved(seat, i) && definition(player.hand[i]).spellboost) {
+                mark_unobserved_card();
+            }
             boost_card(definition(player.hand[i]), player.hand_modifiers[i], 1);
         }
         Ability ability{OnPlay, Origin::Spell, {seat}, payment.form.id, CrestId::None, chosen, mode,
@@ -2702,6 +2796,7 @@ void Resolver::fuse(Action action) {
     const int seat = state_.turn_player;
     auto& player = state_.players[seat];
     const auto card = player.hand[action.src];
+    if (slot_is_unobserved(seat, action.src)) mark_unobserved_card();
     const auto& host = definition(card);
     auto modifiers = player.hand_modifiers[action.src];
     modifiers.fused_ply = static_cast<std::uint8_t>(ply(state_));
@@ -2717,7 +2812,7 @@ void Resolver::fuse(Action action) {
             if (host.fusion_recipe == FusionRecipe::DistinctPair) {
                 modifiers.effect_flags |= material.id == host.fusion_materials[0] ? kFusedBeta : kFusedGamma;
             }
-            erase_hand(player, i);
+            erase_player_hand(seat, i);
             slot -= i < action.src;
         }
     }
@@ -3375,8 +3470,10 @@ bool apply_action(GameState& state, Action action, const RuleConfig& rules) {
     return true;
 }
 
-static void resolve_action(GameState& state, Action action, const RuleConfig& rules, bool* certain) {
-    Resolver resolver(state, rules, certain);
+static void resolve_action(GameState& state, Action action, const RuleConfig& rules, bool* certain,
+                           LethalEvidence* evidence = nullptr, std::uint16_t* unobserved_hand_mask = nullptr,
+                           int observer = -1) {
+    Resolver resolver(state, rules, certain, evidence, unobserved_hand_mask, observer);
     switch (action.type) {
     case ActionType::EndTurn:
         resolver.end_turn();
@@ -3403,6 +3500,10 @@ static void resolve_action(GameState& state, Action action, const RuleConfig& ru
     }
     case ActionType::Mulligan:
         if (certain) *certain = false;
+        if (evidence) {
+            evidence->crossed_unresolved_chance = true;
+            evidence->depends_on_hidden_information = true;
+        }
         replace_opening_cards(state, action.choice, rules);
         if (state.turn_player == 0) {
             state.turn_player = 1;
@@ -3426,6 +3527,26 @@ bool apply_observed_action(GameState& state, Action action, const RuleConfig& ru
     bool certain = true;
     resolve_action(state, action, rules, &certain);
     return certain;
+}
+
+LethalStatus classify_lethal(const LethalEvidence& evidence) noexcept {
+    if (!evidence.terminal_win_verified) return LethalStatus::NotFound;
+    if (evidence.is_proven()) return LethalStatus::Proven;
+    if (evidence.crossed_unresolved_chance) return LethalStatus::Probabilistic;
+    return LethalStatus::Possible;
+}
+
+LethalEvidence apply_action_with_evidence(GameState& state, Action action, int observer,
+                                          std::uint16_t* unobserved_hand_mask, const RuleConfig& rules) {
+    bool certain = true;
+    LethalEvidence ev{};
+    resolve_action(state, action, rules, &certain, &ev, unobserved_hand_mask, observer);
+    ev.terminal_win_verified =
+        state.outcome != Outcome::Ongoing && state.end_reason == EndReason::Health &&
+        state.players[observer].leader_hp > 0 && state.players[1 - observer].leader_hp <= 0 &&
+        ((observer == 0 && state.outcome == Outcome::FirstWins) ||
+         (observer == 1 && state.outcome == Outcome::SecondWins));
+    return ev;
 }
 
 } // namespace svwb::wb

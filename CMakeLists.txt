@@ -109,6 +109,17 @@ if(BUILD_TESTING)
     add_test(NAME wb_search_forced_lethal COMMAND test_wb --forced-lethal)
     add_test(NAME wb_search_determinization COMMAND test_wb --determinization)
     add_test(NAME wb_attention_info_leak_audit COMMAND test_wb --attention-audit)
+    add_test(NAME wb_mcts_root_perspective_backup COMMAND test_wb --mcts-backup)
+    add_test(NAME wb_mulligan_crn_and_exclusion COMMAND test_wb --mulligan-crn)
+    add_test(NAME wb_attention_hidden_state_invariance COMMAND test_wb --hidden-invariance)
+    add_test(NAME wb_mcts_strategy_fusion_expected_value COMMAND test_wb --strategy-fusion)
+    add_test(NAME wb_attention_hidden_pool_consistency COMMAND test_wb --hidden-pool)
+    add_test(NAME wb_attention_opponent_private_info_isolation COMMAND test_wb --opponent-isolation)
+    add_test(NAME wb_attention_stochastic_lethal_not_forced COMMAND test_wb --stochastic-lethal)
+    add_test(NAME wb_attention_global64_turn_boundaries COMMAND test_wb --global64-unit)
+    add_test(NAME wb_attention_embdiff160_and_migration COMMAND test_wb --embdiff-migration-unit)
+    add_test(NAME wb_p0_post_chance_beam_completion COMMAND test_wb --post-chance-beam)
+    add_test(NAME wb_mulligan_crn_post_deck_coupling COMMAND test_wb --mulligan-crn-coupling)
     set_tests_properties(wb_mirror_random_10000 wb_rotation_mirror_random_10000
         wb_elf_neutral_random_5000 wb_royal_neutral_random_5000
         wb_dragon_neutral_random_5000 wb_nightmare_neutral_random_5000

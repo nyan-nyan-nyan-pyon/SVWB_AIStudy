@@ -15,11 +15,15 @@ inline constexpr int kRankedCandidates = 16;
 inline constexpr int kRandomCandidates = 2;
 inline constexpr int kMaxCandidates = kRankedCandidates + kRandomCandidates;
 
+enum class SearchVersion : std::uint8_t { LegacyV2 = 1, P0 = 2 };
+
 struct SearchOptions {
     int simulations = 64;
     bool exploration = true;
     bool record_actions = false;
     bool determinization = true; // Used by the WB turn search.
+    SearchVersion search_version = SearchVersion::P0;
+    int determinization_samples = 4;
 };
 
 struct TurnCandidate {

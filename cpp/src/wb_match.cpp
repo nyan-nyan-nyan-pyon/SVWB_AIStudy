@@ -31,6 +31,7 @@ struct Game {
     AttentionGameLog attention_log;
     std::array<Opening, kPlayers> opening;
     Outcome outcome = Outcome::Ongoing;
+    EndReason end_reason = EndReason::None;
     int turns = 0;
     int rounds = 0;
     double elapsed = 0;
@@ -322,9 +323,10 @@ struct LoadedModel {
         return result;
     }
 
-    static LoadedModel random(attn::ModelType type, std::uint32_t seed) {
+    static LoadedModel random(attn::ModelType type, std::uint32_t seed,
+                              attn::ArchVariant variant = attn::ArchVariant::V3GlobalEmbDiff) {
         LoadedModel result;
-        if (type == attn::ModelType::Attention) result.attention.emplace(attn::AttentionModel::random(seed));
+        if (type == attn::ModelType::Attention) result.attention.emplace(attn::AttentionModel::random(seed, variant));
         else result.mlp.emplace(Mlp::random(seed));
         return result;
     }
@@ -339,13 +341,29 @@ Game play(const MatchOptions& options, const MatchupFeatures& matchup, ModelRef 
           std::uint64_t id, bool trace) {
     const auto start = Clock::now();
     const int a_seat = static_cast<int>(id % 2);
-    std::seed_seq seed{options.seed, static_cast<std::uint32_t>(id), static_cast<std::uint32_t>(id >> 32)};
-    std::mt19937 rng(seed);
-    const auto high = static_cast<std::uint64_t>(rng()) << 32;
-    const auto deck_seed = high | rng();
+    std::uint64_t deck_seed = 0;
+    std::mt19937 rng;
+    if (options.paired_seeds) {
+        const std::uint64_t pair_id = id / 2;
+        std::seed_seq dseq{options.seed, static_cast<std::uint32_t>(pair_id), static_cast<std::uint32_t>(pair_id >> 32), 0x4445434BU};
+        std::mt19937 drng(dseq);
+        const auto d_hi = static_cast<std::uint64_t>(drng()) << 32;
+        deck_seed = d_hi | drng();
+        std::seed_seq sseq{options.seed, static_cast<std::uint32_t>(pair_id), static_cast<std::uint32_t>(pair_id >> 32),
+                           static_cast<std::uint32_t>(a_seat)};
+        rng.seed(sseq);
+    } else {
+        std::seed_seq seed{options.seed, static_cast<std::uint32_t>(id), static_cast<std::uint32_t>(id >> 32)};
+        rng.seed(seed);
+        const auto high = static_cast<std::uint64_t>(rng()) << 32;
+        deck_seed = high | rng();
+    }
     auto state = a_seat == 0 ? new_game(options.deck_a, options.deck_b, deck_seed)
                             : new_game(options.deck_b, options.deck_a, deck_seed);
     const std::array<ModelRef, kPlayers> models{a_seat == 0 ? a : b, a_seat == 0 ? b : a};
+    const SearchVersion a_ver = options.search.search_version;
+    const SearchVersion b_ver = options.opponent_search_version.value_or(a_ver);
+    const std::array<SearchVersion, kPlayers> seat_vers{a_seat == 0 ? a_ver : b_ver, a_seat == 0 ? b_ver : a_ver};
     auto search_options = options.search;
     search_options.record_actions = trace;
     Search search(models[0], models[1], rng, search_options, &matchup);
@@ -356,7 +374,7 @@ Game play(const MatchOptions& options, const MatchupFeatures& matchup, ModelRef 
         const auto action = options.random_opponent && seat != a_seat
             ? Action{ActionType::Mulligan, kNoTarget, kNoTarget,
                      static_cast<std::uint8_t>(std::uniform_int_distribution<int>(0, (1 << kOpeningHand) - 1)(rng))}
-            : choose_mulligan(state, models[seat], rng, &matchup);
+            : choose_mulligan(state, models[seat], rng, &matchup, seat_vers[seat]);
         opening.mask = action.choice;
         for (int i = 0; i < kOpeningHand; ++i) {
             if (!(action.choice & (1 << i))) {
@@ -400,13 +418,15 @@ Game play(const MatchOptions& options, const MatchupFeatures& matchup, ModelRef 
         } else {
             if (logging) {
                 if constexpr (IsAttention) {
-                    game.attention_log.values.push_back({extract_attention_tokens(state), 0});
+                    game.attention_log.values.push_back(
+                        {extract_attention_tokens_for(state, *models[state.turn_player].attention), 0.0F});
                 } else {
-                    game.log.values.push_back({extract_features(state, &matchup), 0});
+                    game.log.values.push_back({extract_features(state, &matchup), 0.0F});
                 }
                 value_seats.push_back(state.turn_player);
             }
             if (options.opponent_perfect_information) search.set_determinization(state.turn_player == a_seat);
+            search.set_search_version(seat_vers[state.turn_player]);
             const auto decision = search.play(state, logging);
             if (trace) {
                 write_turn(trace_data, state, decision, game.turns, options.trace_top);
@@ -415,7 +435,7 @@ Game play(const MatchOptions& options, const MatchupFeatures& matchup, ModelRef 
                 if constexpr (IsAttention) {
                     game.attention_log.policy_sizes.push_back(static_cast<std::int32_t>(decision.attention_policy.size()));
                     for (const auto& sample : decision.attention_policy) {
-                        game.attention_log.policies.push_back({sample.features, sample.probability});
+                        game.attention_log.policies.push_back({sample.features, sample.emb_diff, sample.probability});
                     }
                 } else {
                     game.log.policy_sizes.push_back(static_cast<std::int32_t>(decision.policy.size()));
@@ -429,6 +449,7 @@ Game play(const MatchOptions& options, const MatchupFeatures& matchup, ModelRef 
         ++game.turns;
     }
     game.outcome = state.outcome;
+    game.end_reason = state.end_reason;
     game.rounds = state.turn_number;
     game.elapsed = std::chrono::duration<double>(Clock::now() - start).count();
     for (std::size_t i = 0; i < value_seats.size(); ++i) {
@@ -455,18 +476,22 @@ Game play(const MatchOptions& options, const MatchupFeatures& matchup, ModelRef 
 struct Totals {
     std::uint64_t games = 0, a_first = 0, a_wins = 0, b_wins = 0, both_lose = 0;
     std::uint64_t first_wins = 0, second_wins = 0, turns = 0, rounds = 0, policy_samples = 0;
+    std::uint64_t end_health = 0, end_deckout = 0, end_turn_limit = 0;
     std::array<std::uint64_t, kPlayers> a_seat_wins{};
     double game_seconds = 0;
 
     void observe(const Game& game, int a_seat) {
         ++games;
         a_first += a_seat == 0;
-        a_wins += outcome_value(game.outcome, a_seat) == 1;
-        a_seat_wins[a_seat] += outcome_value(game.outcome, a_seat) == 1;
-        b_wins += outcome_value(game.outcome, 1 - a_seat) == 1;
+        a_wins += outcome_value(game.outcome, a_seat) == 1.0F;
+        a_seat_wins[a_seat] += outcome_value(game.outcome, a_seat) == 1.0F;
+        b_wins += outcome_value(game.outcome, 1 - a_seat) == 1.0F;
         first_wins += game.outcome == Outcome::FirstWins;
         second_wins += game.outcome == Outcome::SecondWins;
         both_lose += game.outcome == Outcome::BothLose;
+        end_health += game.end_reason == EndReason::Health;
+        end_deckout += game.end_reason == EndReason::EmptyDeck;
+        end_turn_limit += game.end_reason == EndReason::TurnLimit;
         turns += game.turns;
         rounds += game.rounds;
         policy_samples += game.log.policies.size() + game.attention_log.policies.size();
@@ -487,15 +512,16 @@ void run_match_impl(const MatchOptions& options) {
     const MatchupFeatures matchup(options.deck_a, options.deck_b);
     static_cast<void>(new_game(options.deck_a, options.deck_b, options.seed));
     const auto opponent_type = options.opponent_model_type.value_or(options.model_type);
-    const auto a = options.weights.empty() ? LoadedModel::random(options.model_type, options.seed)
-                                           : LoadedModel::load(options.model_type, options.weights);
+    const auto a = options.weights.empty()
+        ? LoadedModel::random(options.model_type, options.seed, options.attention_variant)
+        : LoadedModel::load(options.model_type, options.weights);
     std::optional<LoadedModel> b_storage;
     if (!options.opponent_weights.empty()) {
         b_storage = LoadedModel::load(opponent_type, options.opponent_weights);
     } else if (options.opponent_seed) {
-        b_storage = LoadedModel::random(opponent_type, *options.opponent_seed);
+        b_storage = LoadedModel::random(opponent_type, *options.opponent_seed, options.attention_variant);
     } else if (opponent_type != options.model_type) {
-        b_storage = LoadedModel::random(opponent_type, options.seed);
+        b_storage = LoadedModel::random(opponent_type, options.seed, options.attention_variant);
     }
     const ModelRef a_ref = a.ref();
     const ModelRef b_ref = b_storage ? b_storage->ref() : a_ref;
@@ -505,9 +531,40 @@ void run_match_impl(const MatchOptions& options) {
             ? attn::ModelType::Attention : options.model_type;
         snapshot = LoadedModel::load(snap_type, options.snapshot.weights);
     }
+    attn::ModelMetadata attn_log_meta{};
+    if constexpr (is_attention) {
+        attn_log_meta = a.attention->metadata();
+        attn_log_meta.search_version = static_cast<std::uint32_t>(options.search.search_version);
+        attn_log_meta.reward_definition = attn::kRewardWinHalfBothLose;
+        if (!options.log_dir.empty()) {
+            if (b_ref.attention && b_ref.attention->variant() != a.attention->variant()) {
+                throw std::invalid_argument("Training logs require identical Attention architecture variants");
+            }
+            if (snapshot && snapshot->attention && snapshot->attention->variant() != a.attention->variant()) {
+                throw std::invalid_argument("Snapshot opponent must match Attention architecture variant when logging");
+            }
+        }
+    }
     std::optional<Logs> logs;
     if (!options.log_dir.empty()) {
-        logs.emplace(options.log_dir);
+        if constexpr (is_attention) {
+            logs.emplace(options.log_dir, attn_log_meta);
+        } else {
+            logs.emplace(options.log_dir);
+        }
+    }
+    struct PerGameRecord {
+        std::uint64_t game_id = 0;
+        int a_seat = 0;
+        float a_score = 0.0F;
+        Outcome outcome = Outcome::Ongoing;
+        EndReason end_reason = EndReason::None;
+        int turns = 0;
+        double elapsed = 0.0;
+    };
+    std::vector<PerGameRecord> per_game_records;
+    if (!options.outcomes_json.empty() && options.games > 0) {
+        per_game_records.reserve(static_cast<std::size_t>(options.games));
     }
     const bool analyzing = !options.analysis_dir.empty();
     OpeningTable table(options.deck_a);
@@ -552,6 +609,11 @@ void run_match_impl(const MatchOptions& options) {
                     }
                 }
                 totals.observe(game, a_seat);
+                if (!options.outcomes_json.empty()) {
+                    per_game_records.push_back(
+                        {id, a_seat, outcome_value(game.outcome, a_seat), game.outcome, game.end_reason,
+                         game.turns, game.elapsed});
+                }
                 snapshot_games += against_snapshot;
             }
         } catch (...) {
@@ -581,10 +643,20 @@ void run_match_impl(const MatchOptions& options) {
         logs->finish();
         auto out = output_file(options.log_dir / "matchup_features.json");
         if constexpr (is_attention) {
-            out << "{\"schema\":\"" << attention_feature_schema()
+            out << "{\"schema\":\"" << attention_feature_schema(a.attention->variant())
                 << "\",\"model_type\":\"attention\",\"input_dim\":128,\"vocab_size\":" << attn::kVocab
-                << ",\"max_tokens\":" << attn::kMaxTokens << ",\"global_dim\":" << attn::kGlobalDim
-                << ",\"attr_dim\":" << attn::kAttrDim << ",\"candidate_dim\":" << attn::kCandidateDim << ",\"cards\":[";
+                << ",\"max_tokens\":" << attn::kMaxTokens
+                << ",\"model_version\":" << attn_log_meta.model_version
+                << ",\"global_dim\":" << attn_log_meta.global_dim
+                << ",\"attr_dim\":" << attn::kAttrDim
+                << ",\"candidate_dim\":" << attn_log_meta.candidate_dim
+                << ",\"candidate_embdiff_dim\":" << attn_log_meta.candidate_embdiff_dim
+                << ",\"token_schema_version\":" << attn_log_meta.token_schema_version
+                << ",\"card_vocab_hash\":" << attn_log_meta.card_vocab_hash
+                << ",\"rules_version\":" << attn_log_meta.rules_version
+                << ",\"search_version\":" << attn_log_meta.search_version
+                << ",\"reward_definition\":" << attn_log_meta.reward_definition
+                << ",\"cards\":[";
         } else {
             out << "{\"schema\":\"" << feature_schema(matchup) << "\",\"input_dim\":256,\"cards\":[";
         }
@@ -626,16 +698,42 @@ void run_match_impl(const MatchOptions& options) {
             }
         }
     }
+    if (!options.outcomes_json.empty()) {
+        std::sort(per_game_records.begin(), per_game_records.end(),
+                  [](const auto& l, const auto& r) { return l.game_id < r.game_id; });
+        if (options.outcomes_json.has_parent_path()) {
+            std::filesystem::create_directories(options.outcomes_json.parent_path());
+        }
+        auto jout = output_file(options.outcomes_json);
+        jout << std::fixed << std::setprecision(6) << "{\"games\":[\n";
+        for (std::size_t i = 0; i < per_game_records.size(); ++i) {
+            const auto& r = per_game_records[i];
+            jout << (i ? ",\n" : "") << "  {\"id\":" << r.game_id << ",\"a_seat\":" << r.a_seat
+                 << ",\"a_score\":" << r.a_score << ",\"both_lose\":" << (r.outcome == Outcome::BothLose ? 1 : 0)
+                 << ",\"end_reason\":" << static_cast<int>(r.end_reason)
+                 << ",\"turns\":" << r.turns << ",\"seconds\":" << r.elapsed << "}";
+        }
+        jout << "\n]}\n";
+    }
     const double games = static_cast<double>(totals.games);
+    const char* attn_schema = "wb-attention-v3";
+    if constexpr (is_attention) {
+        attn_schema = attention_feature_schema(a.attention->variant());
+    }
     std::cout << "games=" << totals.games << " threads=" << threads << " turns=" << totals.turns
               << " seed=" << options.seed << " simulations=" << options.search.simulations
               << " mode=" << (options.evaluate ? "evaluate" : "selfplay") << " rules=wb"
-              << " feature_schema=" << (is_attention ? attention_feature_schema() : feature_schema(matchup));
+              << " feature_schema=" << (is_attention ? attn_schema : feature_schema(matchup));
     if constexpr (is_attention) {
         std::cout << " model_type=attention";
     }
     if (opponent_type != options.model_type) {
         std::cout << " opponent_model_type=" << (opponent_type == attn::ModelType::Attention ? "attention" : "mlp");
+    }
+    std::cout << " search_version=" << (options.search.search_version == SearchVersion::P0 ? "p0" : "legacy");
+    if (options.opponent_search_version && *options.opponent_search_version != options.search.search_version) {
+        std::cout << " opponent_search_version="
+                  << (*options.opponent_search_version == SearchVersion::P0 ? "p0" : "legacy");
     }
     std::cout << " information=" << (options.search.determinization ? "determinized" : "perfect")
               << " opponent_information=" << (options.random_opponent ? "random" :
@@ -645,7 +743,11 @@ void run_match_impl(const MatchOptions& options) {
               << " A_wins=" << totals.a_wins << " B_wins=" << totals.b_wins << " draws=" << totals.both_lose
               << " A_first_wins=" << totals.a_seat_wins[0] << " A_second_wins=" << totals.a_seat_wins[1]
               << " first_wins=" << totals.first_wins << " second_wins=" << totals.second_wins
-              << " both_lose=" << totals.both_lose << '\n'
+              << " both_lose=" << totals.both_lose
+              << " both_lose_rate=" << std::fixed << std::setprecision(6) << (totals.both_lose / games)
+              << " end_health=" << totals.end_health
+              << " end_deckout=" << totals.end_deckout
+              << " end_turn_limit=" << totals.end_turn_limit << '\n'
               << std::fixed << std::setprecision(4)
               << "wall_seconds=" << elapsed << " avg_game_seconds=" << totals.game_seconds / games
               << " wall_seconds_per_game=" << elapsed / games << " games_per_second=" << games / elapsed
