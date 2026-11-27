@@ -53,7 +53,7 @@ struct RuleConfig {
     bool refusion_after_hand_transform = true;
     bool fusion_requires_trigger_pp = false;
     bool highlander_counts_card_names = true;
-    bool round_half_max_hp_up = false;
+    bool round_half_max_hp_up = true;
     bool burn_crest_heal_on_enemy_turn = false;
     std::uint8_t fanfare_repeat_limit = 64;
 };

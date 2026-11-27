@@ -1,0 +1,5 @@
+entity_id	clause	branch	case	ctest_group	source	assertion
+10062210	【カウントダウン_4】	active	winged statue	wb_rules_unit	cpp/tests/test_wb.cpp:110	Play starts at four. Turn progression ticks the countdown and eventually summons Holy Falcon.
+10062210	コスト1【アクト】これのカウントを-1する。	active	winged statue	wb_rules_unit	cpp/tests/test_wb.cpp:110	Act takes PP from nine to eight and countdown from four to three. Same-turn repeat is rejected.
+10061210	【カウントダウン_2】	active	projected statue	wb_rules_unit	cpp/tests/test_wb.cpp:263	Play sets the board amulet countdown to two.
+10513310	自分のデッキからX枚を引く。Xは自分の【コンボ】である。	active	elf.10513310.draw_count_matches_combo_after_play		cpp/tests/wb_spec/elf.cpp:150	Playing the spell after two plays draws three cards.

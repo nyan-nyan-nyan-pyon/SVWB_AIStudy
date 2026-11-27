@@ -14,6 +14,7 @@ namespace {
 using enum Trigger;
 
 constexpr int kExtraPpRefillTurn = 6;
+constexpr int kMaxEvolutionPoints = 2;
 constexpr EntityId kLeaderTargetFlag = EntityId{1} << 30;
 
 struct Ref {
@@ -418,6 +419,7 @@ struct Ability {
     int effective_cost = 0;
     int enhance_cost = 0;
     int discarded_slot = -1;
+    bool contributes_play_shadow = false;
 };
 
 bool fusion_matches(const CardDef& host, const CardDef& material) {
@@ -1034,7 +1036,10 @@ void Resolver::run_steps(const Ability& ability, std::span<const Effect> effects
         const auto& step = effects[i];
         if (step.trigger == ability.trigger && takes_mode(step, ability.mode) && conditions(step)) {
             if (step.operation == Operation::Necromancy) {
-                paid = step.amount >= 0 && player.shadows >= step.amount;
+                // Play has already credited this spell's shadow so separate triggers can
+                // use it. The spell itself cannot use that one shadow for its Necromancy.
+                const int usable_shadows = player.shadows - static_cast<int>(ability.contributes_play_shadow);
+                paid = step.amount >= 0 && usable_shadows >= step.amount;
                 if (!paid) continue;
             } else if (step.operation == Operation::EarthRite) {
                 const int slot = earth_slot(player);
@@ -1097,7 +1102,7 @@ Ref Resolver::enter(int seat, CardId card, CardModifiers modifiers) {
         const int old = earth_slot(player);
         if (old >= 0) {
             earth += player.board[old].earth_count;
-            erase(player.board, player.board_count, old);
+            banish({seat, player.board[old].creation_order});
         }
     }
     const Ref ref{seat, state_.next_creation_order++};
@@ -1427,10 +1432,12 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
     const auto other_follower = [&](const Permanent& object) { return follower(object) && object.creation_order != source.order; };
     switch (step.target) {
     case Target::AllEnemyFollowers: case Target::AllEnemyFollowersAndLeader: case Target::AllEnemyFollowersAndBothLeaders:
-        gather(enemy, follower); break;
+        group = step.operation != Operation::SplitDamage;
+        if (group) gather(enemy, follower);
+        break;
     case Target::AllOwnFollowers: gather(owner, follower); break;
     case Target::FirstTwoOwnFollowers:
-        for (int i = player.board_count - 1; i >= 0 && target_count < 2; --i) {
+        for (int i = 0; i < player.board_count && target_count < 2; ++i) {
             if (follower(player.board[i])) targets[target_count++] = {owner, player.board[i].creation_order};
         }
         break;
@@ -1633,20 +1640,25 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
         break;
     }
     case SplitDamage: {
+        const bool include_leader = step.target == Target::AllEnemyFollowersAndLeader;
         const auto& opponent = state_.players[enemy];
         std::array<Ref, kBoardLimit> followers{};
         int count = 0;
+        // Entries append in creation order. Removals and transformations preserve that order.
         for (int i = 0; i < opponent.board_count; ++i) {
             const auto& object = opponent.board[i];
             if (follower(object)) followers[count++] = {enemy, object.creation_order};
         }
         int remaining = amount;
         for (int i = 0; i < count && remaining > 0; ++i) {
-            const int apportioned = i + 1 == count ? remaining :
-                std::min(remaining, static_cast<int>(find(state_, followers[i])->hp));
+            const auto* object = find(state_, followers[i]);
+            if (!object || object->hp <= 0) continue;
+            const int apportioned = !include_leader && i + 1 == count ? remaining :
+                std::min(remaining, static_cast<int>(object->hp));
             damage(followers[i], apportioned);
             remaining -= apportioned;
         }
+        if (include_leader && remaining > 0) damage_leader(enemy, remaining);
         break;
     }
     case Heal:
@@ -1875,11 +1887,11 @@ void Resolver::effect(const Ability& ability, const Effect& step, EntityId rando
         player.pp = static_cast<std::uint8_t>(std::min(static_cast<int>(player.max_pp), player.pp + amount));
         break;
     case RestoreEp:
-        player.ep = static_cast<std::uint8_t>(std::min(255, player.ep + step.amount));
+    case RestoreSep: {
+        auto& points = step.operation == RestoreEp ? player.ep : player.sep;
+        points = static_cast<std::uint8_t>(std::clamp(points + amount, 0, kMaxEvolutionPoints));
         break;
-    case RestoreSep:
-        player.sep = static_cast<std::uint8_t>(std::min(2, player.sep + amount));
-        break;
+    }
     case SetAttackLimit:
         if (auto* object = find(state_, target)) {
             object->attack_limit = static_cast<std::uint8_t>(std::max(static_cast<int>(object->attack_limit), amount));
@@ -2761,6 +2773,7 @@ void Resolver::play(Action action) {
                         modifiers.spellboost, modifiers.fused_materials, static_cast<std::uint16_t>(selection)};
         ability.effective_cost = effective_cost;
         ability.enhance_cost = enhanced;
+        ability.contributes_play_shadow = true;
         if (action.secondary_slot >= 0) {
             ability.discarded_slot = action.secondary_slot - (action.secondary_slot > action.src);
         }
@@ -3198,7 +3211,7 @@ GameState new_game(const Deck& first, const Deck& second, std::uint64_t seed) {
         }
         player.leader_hp = kLeaderMaxHp;
         player.leader_max_hp = kLeaderMaxHp;
-        player.ep = player.sep = 2;
+        player.ep = player.sep = kMaxEvolutionPoints;
         player.extra_pp_available = seat == 1;
         shuffle(state, player, 0);
         draw(state, seat, kOpeningHand);

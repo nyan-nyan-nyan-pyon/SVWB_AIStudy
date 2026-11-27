@@ -1,0 +1,16 @@
+[
+  {
+    "name": "phase2_draw_hp_gate",
+    "family": "insert_condition",
+    "file": "data/cards/phase5b4_cards.json",
+    "section": "cards",
+    "entity": {"card_id": 10031310},
+    "effect": {"trigger": "OnPlay", "operation": "Draw"},
+    "changes": {
+      "condition": {"before": null, "after": "OwnHpAtMost"},
+      "threshold": {"before": null, "after": 10}
+    },
+    "case": "catalog.10031310.effect-1-Play-Draw",
+    "additional_cases": ["phase2_audit.10031310.draw_is_independent_of_leader_hp"]
+  }
+]

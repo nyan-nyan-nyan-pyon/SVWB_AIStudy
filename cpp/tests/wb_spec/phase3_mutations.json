@@ -1,0 +1,92 @@
+[
+  {
+    "name": "p3_played_spell_can_fund_itself",
+    "family": "shadow_source",
+    "file": "cpp/src/wb_rules.cpp",
+    "before": "const int usable_shadows = player.shadows - static_cast<int>(ability.contributes_play_shadow);",
+    "after": "const int usable_shadows = player.shadows;",
+    "case": "phase3_necromancy.10753310.spell_shadow_not_available_to_inline_necromancy",
+    "additional_cases": [
+      "phase3_necromancy.10651310.spell_draws_before_necromancy_boundary"
+    ]
+  },
+  {
+    "name": "p3_separate_last_words_lose_a_shadow",
+    "family": "shadow_scope",
+    "file": "cpp/src/wb_rules.cpp",
+    "before": "const int usable_shadows = player.shadows - static_cast<int>(ability.contributes_play_shadow);",
+    "after": "const int usable_shadows = player.shadows - 1;",
+    "case": "phase2_audit.official_faq.soul_predation_funds_gremory_last_words",
+    "additional_cases": [
+      "phase3_necromancy.11052120.attack_spends_the_full_live_threshold"
+    ]
+  },
+  {
+    "name": "p3_only_ep_can_exceed_two",
+    "family": "evolution_cap",
+    "file": "cpp/src/wb_rules.cpp",
+    "before": "std::clamp(points + amount, 0, kMaxEvolutionPoints)",
+    "after": "std::clamp(points + amount, 0, step.operation == RestoreEp ? 3 : kMaxEvolutionPoints)",
+    "case": "phase3_points.10801120.ep_recovery_respects_two_point_cap_and_repeats",
+    "additional_cases": [
+      "phase3_points.10854110.mode_two_ep_recovery_respects_cap",
+      "special.11033312.ep_recovery_at_cap_still_expires"
+    ]
+  },
+  {
+    "name": "p3_only_sep_can_exceed_two",
+    "family": "evolution_cap",
+    "file": "cpp/src/wb_rules.cpp",
+    "before": "std::clamp(points + amount, 0, kMaxEvolutionPoints)",
+    "after": "std::clamp(points + amount, 0, step.operation == RestoreSep ? 3 : kMaxEvolutionPoints)",
+    "case": "phase3_points.10804120.sep_recovery_respects_two_point_cap"
+  },
+  {
+    "name": "p3_world_draws_only_one",
+    "family": "draw_amount",
+    "file": "data/cards/phase5b1_cards.json",
+    "section": "cards",
+    "entity": {
+      "card_id": 10503310
+    },
+    "effect": {
+      "trigger": "OnPlay",
+      "operation": "Draw"
+    },
+    "field": "amount",
+    "before": 2,
+    "after": 1,
+    "case": "phase3_world.10503310.draws_two_with_zero_through_three_cards_remaining",
+    "additional_cases": [
+      "phase3_world.10503310.enhance_deck_out_precedes_lethal_damage"
+    ]
+  },
+  {
+    "name": "p3_buffs_rightmost_instead",
+    "family": "board_order",
+    "file": "cpp/src/wb_rules.cpp",
+    "before": "case Target::FirstTwoOwnFollowers:\n        for (int i = 0; i < player.board_count && target_count < 2; ++i)",
+    "after": "case Target::FirstTwoOwnFollowers:\n        for (int i = player.board_count - 1; i >= 0 && target_count < 2; --i)",
+    "case": "phase2_dragon.11043310.mode_one_two_three_followers_buff_only_leftmost_two",
+    "additional_cases": [
+      "phase2_dragon.11043310.mode_one_two_two_followers_skip_evidence_amulet"
+    ]
+  },
+  {
+    "name": "p3_drops_evidence_gate",
+    "family": "evidence_guard",
+    "file": "data/cards/phase5b3_cards.json",
+    "section": "cards",
+    "entity": {
+      "card_id": 11042310
+    },
+    "effect": {
+      "trigger": "OnPlay",
+      "operation": "DrawFiltered"
+    },
+    "field": "condition",
+    "before": "CostPaid",
+    "after": "Always",
+    "case": "phase2_dragon.11042310.no_evidence_does_not_draw"
+  }
+]

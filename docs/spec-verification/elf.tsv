@@ -1,0 +1,34 @@
+entity_id	effect_or_branch	case_name	source	note
+11011110	進化時・元コスト1カード2枚以上	elf.11011110.evolve_heals_at_two_original_cost_one_cards	data/cards/svwb_rotation_ja.json (official catalog, 11011110)	Compare zero versus one pre-existing one-cost follower; the fanfare adds a one-cost Evidence amulet that also counts.
+11012110	場に出たとき・他の元コスト1カード2枚以上	elf.11012110.entry_buff_counts_other_original_cost_one_cards	data/cards/svwb_rotation_ja.json (official catalog, 11012110)	Boundary verifies other cards only and +2/+1; also checks Rush.
+11012120	自分のターン終了時	elf.11012120.end_turn_adds_both_named_cards	data/cards/svwb_rotation_ja.json (official catalog, 11012120)	Checks end trigger adds Forest Mystery then Fairy.
+11013110	進化時・元コスト1カード2枚以上	elf.11013110.evolve_summons_mouse_at_two_cost_one_cards	data/cards/svwb_rotation_ja.json (official catalog, 11013110)	Compare Evidence-only against Evidence plus one one-cost follower; checks the two-card threshold, Storm, and Evidence fanfare.
+11014110	超進化時・他のフォロワーすべて+2/+0	elf.11014110.super_evolve_buffs_other_summoned_followers	data/cards/svwb_rotation_ja.json (official catalog, 11014110)	Checks summoned dog and mouse receive the buff; Dog fanfare is not run on summon, so no Evidence appears.
+11011310	エンハンス6・1枚ではなく3枚	elf.11011310.enhance_boundary_summons_one_or_three_evolved_fairies	data/cards/svwb_rotation_ja.json (official catalog, 11011310)	Compare PP5 base to PP6 auto-Enhance; this card has no selectable mode, so play action choice stays zero.
+
+10512110	ファンファーレ・コンボ5	elf.10512110.combo_five_summons_and_evolves_pair	data/cards/svwb_rotation_ja.json (official catalog, 10512110)	Check Combo 4 versus 5 and evolution of both copies.
+10912110	ファンファーレ・コンボ3で手札のフェアリーに必殺	elf.10912110.combo_three_grants_bane_to_generated_fairy	data/cards/svwb_rotation_ja.json (official catalog, 10912110)	Threshold pair checks the generated Fairy modifier.
+10512310	コンボ3で全体・リーダーへのダメージが2	elf.10512310.combo_three_doubles_all_damage	data/cards/svwb_rotation_ja.json (official catalog, 10512310)	Compare one damage to two at the exact threshold.
+10513310	コンボ数ぶんドロー	elf.10513310.draw_count_matches_combo_after_play	data/cards/svwb_rotation_ja.json (official catalog, 10513310)	Sets two prior plays and checks three cards drawn including this spell.
+10913110	ファンファーレ・コンボ3で2ドロー	elf.10913110.combo_three_fanfare_draws_two	data/cards/svwb_rotation_ja.json (official catalog, 10913110)	Compare Combo 2 and 3.
+10913310	手札で働く・ターン終了時コンボ3でコスト減少	elf.10913310.end_turn_discount_requires_combo_three	data/cards/svwb_rotation_ja.json (official catalog, 10913310)	Compare two versus three earlier plays; the held spell is not itself a play toward Combo.
+11013310	元コスト1カード2枚以上で手札のネズミに疾走	elf.11013310.one_cost_board_threshold_grants_mouse_storm	data/cards/svwb_rotation_ja.json (official catalog, 11013310)	Compare one and two board cards.
+10713110	自ターン終了時・コンボ3で1ドロー	elf.10713110.end_turn_draw_starts_at_combo_three	data/cards/svwb_rotation_ja.json (official catalog, 10713110)	Includes the Archer play in the combo count.
+10513110	超進化時・妖精フォロワーに必殺	elf.10513110.super_evolve_grants_bane_only_to_fairies	data/cards/svwb_rotation_ja.json (official catalog, 10513110)	Checks trait-limited ability grant and excludes non-Fairy follower.
+10511120	妖精フォロワーが場に出たとき	elf.10511120.fairy_entry_trigger_damages_enemy_leader	data/cards/svwb_rotation_ja.json (official catalog, 10511120)	Checks both fanfare and played Fairy events; non-Fairy entry is inert.
+10814120	バフ誘発・自ターン1回	elf.10814120.enhanced_buff_triggers_one_eve_per_turn	data/cards/svwb_rotation_ja.json (official catalog, 10814120); cpp/tests/wb_spec/official_supplement.json (90014110)	Enhance payment is automatic at 4 PP; no selectable mode. Buffing multiple followers adds only one Eve.
+10813110	ファンファーレ・自分のフォロワーすべてにバリア	elf.10813110.barrier_applies_to_existing_source_and_summon	data/cards/svwb_rotation_ja.json (official catalog, 10813110)	Checks existing follower, source, and fanfare summon.
+10813310	コスト2以下の異なる種類のフォロワーをデッキから2種	elf.10813310.deck_summons_two_distinct_low_cost_followers_then_buffs	data/cards/svwb_rotation_ja.json (official catalog, 10813310)	Controlled deck contains exactly two different eligible followers.
+10914110	超進化時・疾走付与	elf.10914110.super_evolve_grants_storm	data/cards/svwb_rotation_ja.json (official catalog, 10914110)	Checks the Super-Evolve keyword branch.
+
+10012120	超進化時・選択フォロワーを手札に戻す	elf.10012120.super_evolve_bounces_chosen_follower	data/cards/svwb_rotation_ja.json (official catalog, 10012120)	Bounce leaves no shadow and returns the same card to opponent hand.
+10811110	ファンファーレ・敵フォロワー数と味方フォロワー数の差だけ破壊	elf.10811110.fanfare_destruction_scales_with_board_difference	data/cards/svwb_rotation_ja.json (official catalog, 10811110)	Compare zero versus one positive board-count difference; random identity is irrelevant.
+10814110	ファンファーレ・敵フォロワー破壊と他の味方を+1/+1	elf.10814110.fanfare_destroys_enemy_and_buffs_other_follower	data/cards/svwb_rotation_ja.json (official catalog, 10814110)	Checks that the source is excluded from its own buff.
+11011120	ファンファーレと進化時に同名2枚を召喚	elf.11011120.fanfare_and_evolve_each_summon_two_rushers	data/cards/svwb_rotation_ja.json (official catalog, 11011120)	Checks both repeated summon triggers and Rush on generated followers.
+10614110	ファンファーレ3体召喚・超進化時選択破壊	elf.10614110.super_evolve_destroys_follower_and_fanfare_adds_green_fairies	data/cards/svwb_rotation_ja.json (official catalog, 10614110); cpp/tests/wb_spec/official_supplement.json (90011120)	Fanfare summons three Green Fairies; Super-Evolve destroys the chosen enemy follower.
+10711110	4以上の被ダメージを3に上限	elf.10711110.damage_cap_reduces_four_damage_to_three	data/cards/svwb_rotation_ja.json (official catalog, 10711110)	A 4-attack enemy clash checks the damage cap and counterattack.
+10914120	手札で働く・プレイごとにターン終了までコスト-1	elf.10914120.hand_cost_drops_per_play_until_turn_end	data/cards/svwb_rotation_ja.json (official catalog, 10914120)	Two played cards lower cost by two, then turn end restores printed cost.
+11014120	2回ドロー・引いたエルフフォロワーを召喚	elf.11014120.fanfare_draws_twice_and_summons_only_drawn_elf_followers	data/cards/svwb_rotation_ja.json (official catalog, 11014120)	Controlled top two verify Elf summon and non-Elf retained in hand.
+10714120	自ターン終了時・攻撃力分のダメージ割りふり	elf.10714120.end_turn_split_damage_uses_current_attack	data/cards/svwb_rotation_ja.json (official catalog, 10714120); cpp/tests/wb_spec/official_supplement.json (90011310)	With one enemy follower, all five damage goes to it.
+10011130	ファンファーレ・コンボ3で進化	elf.10011130.combo_three_fanfare_evolves_only_at_threshold	data/cards/svwb_rotation_ja.json (official catalog, 10011130)	Compare two and three plays including this card.
+10612120	疾走・プレイしたターンにリーダーを攻撃	elf.10612120.storm_follower_can_attack_leader_on_entry	data/cards/svwb_rotation_ja.json (official catalog, 10612120)	Verifies immediate face attack for the 6-cost follower.

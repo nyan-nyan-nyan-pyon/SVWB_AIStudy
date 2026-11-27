@@ -68,6 +68,39 @@ svwb_enable_warnings(svwb_play_cli)
 
 include(CTest)
 if(BUILD_TESTING)
+    set(SVWB_SPEC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cpp/tests/wb_spec")
+    set(SVWB_SPEC_DATA "${CMAKE_CURRENT_BINARY_DIR}/generated/official_spec.inc")
+    add_custom_command(OUTPUT "${SVWB_SPEC_DATA}"
+        COMMAND "${Python3_EXECUTABLE}" "${SVWB_SPEC_DIR}/spec_data.py" --output "${SVWB_SPEC_DATA}"
+        DEPENDS "${SVWB_SPEC_DIR}/spec_data.py" "${SVWB_SPEC_DIR}/official_supplement.json"
+                data/cards/svwb_rotation_ja.json data/cards/svwb_missing_tokens.json
+                data/cards/svwb_special_effect_research.json data/cards/engine_cards.json
+                data/cards/phase5b1_cards.json data/cards/phase5b2_cards.json
+                data/cards/phase5b3_cards.json data/cards/phase5b4_cards.json
+                data/cards/rotation_high_cost_cards.json
+        VERBATIM)
+    set(SVWB_SPEC_GROUPS elf royal witch dragon nightmare bishop nemesis neutral special rules
+        phase2_elf phase2_royal phase2_witch phase2_dragon phase2_nightmare
+        phase2_bishop phase2_nemesis phase2_neutral phase2_special phase2_tokens
+        phase3_necromancy phase3_points phase3_world phase3_decks)
+    add_executable(test_wb_spec "${SVWB_SPEC_DIR}/main.cpp" "${SVWB_SPEC_DIR}/catalog.cpp"
+        "${SVWB_SPEC_DIR}/search_keys.cpp" "${SVWB_SPEC_DATA}")
+    foreach(group IN LISTS SVWB_SPEC_GROUPS)
+        target_sources(test_wb_spec PRIVATE "${SVWB_SPEC_DIR}/${group}.cpp")
+    endforeach()
+    target_link_libraries(test_wb_spec PRIVATE svwb_rules svwb_search)
+    target_compile_definitions(test_wb_spec PRIVATE
+        SVWB_SPEC_DECKS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/data/decks/phase5c")
+    target_include_directories(test_wb_spec PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    set_target_properties(test_wb_spec PROPERTIES CXX_EXTENSIONS OFF)
+    svwb_enable_warnings(test_wb_spec)
+    foreach(group catalog ${SVWB_SPEC_GROUPS})
+        add_test(NAME wb_spec_${group} COMMAND test_wb_spec "${group}.")
+        set_tests_properties(wb_spec_${group} PROPERTIES LABELS "wb_spec" TIMEOUT 30)
+    endforeach()
+    add_test(NAME wb_spec_phase2_audit COMMAND test_wb_spec "phase2_audit.")
+    set_tests_properties(wb_spec_phase2_audit PROPERTIES LABELS "wb_spec" TIMEOUT 30)
+
     add_executable(test_engine cpp/tests/test_engine.cpp)
     target_link_libraries(test_engine PRIVATE svwb_engine)
     set_target_properties(test_engine PROPERTIES CXX_EXTENSIONS OFF)

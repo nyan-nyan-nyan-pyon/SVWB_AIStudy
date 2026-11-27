@@ -2519,7 +2519,7 @@ void witch_nemesis_crests() {
         CHECK(s.player().leader_hp == 14);
         s.next_own_turn();
         s.run({Act, 0});
-        CHECK(s.player().ep == 3 && s.player().crest_count == 1 && s.player().crests[0].id == Noin);
+        CHECK(s.player().ep == 2 && s.player().crest_count == 1 && s.player().crests[0].id == Noin);
     }
     {
         Scenario s;

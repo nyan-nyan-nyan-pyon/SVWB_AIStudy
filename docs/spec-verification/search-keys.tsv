@@ -1,0 +1,11 @@
+entity_id	effect_or_branch	case_name	source	note
+Rule:PositionHash	Amulet countdown changes	rules.hash.countdown	cpp/include/wb_rules.hpp	Internal discrimination check, no official hash specification.
+Rule:PositionHash	Crest expiry countdown changes	rules.hash.crest_countdown	cpp/include/wb_rules.hpp	Full GameState equality is also checked.
+Rule:PositionHash	Crest once-per-round trigger history changes	rules.hash.crest_trigger_round	cpp/include/wb_rules.hpp	Full GameState equality is also checked.
+Rule:PositionHash	Faith value changes	rules.hash.faith_value	cpp/include/wb_rules.hpp	Full GameState equality is also checked.
+Rule:PositionHash	Earth Sigil count changes	rules.hash.earth_count	cpp/include/wb_rules.hpp	Full GameState equality is also checked.
+Rule:PositionHash	Temporary hand cost changes	rules.hash.temporary_cost	cpp/include/wb_rules.hpp	Full GameState equality is also checked.
+Rule:PositionHash	Fusion turn changes	rules.hash.fused_ply	cpp/include/wb_rules.hpp	Full GameState equality is also checked.
+Rule:PositionHash	Artifact entry history changes	rules.hash.artifact_history	cpp/include/wb_rules.hpp	Full GameState equality is also checked.
+Rule:PositionHash	Amulet Act flag changes	rules.hash.amulet_act	cpp/include/wb_rules.hpp	Full GameState equality is also checked.
+Rule:LegacyPosition	Board identity must preserve CardId beyond the low byte	rules.hash.legacy_card_identity	cpp/include/wb_rules.hpp	Internal equality regression for two different registered followers with equal low bytes.

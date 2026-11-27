@@ -8,7 +8,7 @@
       {"trigger":"OnSuperEvolve","operation":"Summon","amount":1,"card_id":10734120}
     ]},
     {"id":638,"card_id":11034120, "effects": [
-      {"trigger":"OnPlay","operation":"SplitDamage","magnitude":"EarthSigils"}
+      {"trigger":"OnPlay","operation":"SplitDamage","target":"AllEnemyFollowersAndLeader","magnitude":"EarthSigils"}
     ]},
     {"id":639,"card_id":10032120,"spellboost":true,"spellboost_cost_reduction":1},
     {"id":640,"card_id":10534120,"spellboost":true,"spellboost_cost_reduction":1, "effects": [

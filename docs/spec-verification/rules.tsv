@@ -1,0 +1,28 @@
+entity_id	effect_or_branch	case_name	source	note
+Rule:BoardLimit	Summon	rules.board_limit_summon	https://shadowverse-wb.com/ja/help/?tab=tab1	Five-card board; overflow generated summons are neither put into play nor added to the graveyard.
+Rule:HandLimit	Draw	rules.hand_limit_overflow_draw	https://shadowverse-wb.com/ja/help/?tab=tab1	Nine-card hand; an overflow draw is not added to hand and increases the graveyard.
+Rule:RandomTargetEligibility	RandomEnemyTwoWard	rules.random_target_respects_eligibility	Internal eligibility invariant	Random target resolution only chooses an entity meeting the requested Ward-follower condition.
+Rule:Destruction	DamageAllEnemyFollowers	rules.simultaneous_follower_destruction	https://shadowverse-wb.com/ja/help/?tab=tab1	All-enemy-follower damage kills each follower at zero health; destroyed followers increment their own graveyard/counter state.
+Rule:Countdown	TurnStartMultipleCountdowns	rules.countdown_resolution_creation_order	Internal ordering invariant	Two countdown amulets expire together; engine processes their countdown summons by creation order.
+Rule:WinCondition	LethalHealth	rules.lethal_stops_later_effect_steps	https://shadowverse-wb.com/ja/help/?tab=tab1	Leader health reaching zero ends the battle.
+Internal:GameState	CopyIndependence	rules.state_copy_is_independent_internal	Internal invariant (not official rule)	Value-copying GameState and mutating the copy leaves the original state unchanged.
+Rule:BoardLimit	Play at exactly five	rules.board_limit_exact_capacity	https://shadowverse-wb.com/ja/help/?tab=tab1	A follower may occupy the fifth board slot.
+Rule:BoardLimit	Play at five already	rules.board_limit_overflow_play_rejected	https://shadowverse-wb.com/ja/help/?tab=tab1	A sixth board card cannot be played onto a full five-card board; rejected action preserves hand and board.
+Rule:BoardLimit	Generated summon at five	rules.board_limit_summon_plus_one	https://shadowverse-wb.com/ja/help/?tab=tab1	An overflow generated summon does not enter play and does not increase the graveyard.
+Rule:HandLimit	Draw into ninth slot	rules.hand_limit_exact_nine_draw	https://shadowverse-wb.com/ja/help/?tab=tab1	The ninth card is retained; no overflow graveyard count is added.
+Rule:HandLimit	AddHand at nine	rules.hand_limit_addhand_overflow	https://shadowverse-wb.com/ja/help/?tab=tab1	A generated card that exceeds the nine-card hand limit goes to the graveyard.
+Rule:HandLimit	Bounce with space	rules.bounce_with_hand_room	https://shadowverse-wb.com/ja/help/?tab=tab1	A bounced card returns to its owner's hand when there is room; bounce does not count as destruction (counter assertion is internal).
+Rule:HandLimit	Bounce into full hand	rules.bounce_at_full_hand_overflows	https://shadowverse-wb.com/ja/help/?tab=tab1	When the hand is full, the bounced card goes to the graveyard; the follower is not counted as destroyed (counter assertion is internal).
+Rule:RandomTargetEligibility	RandomEnemyTwoWard with none	rules.random_target_empty_eligibility	Internal eligibility invariant	If no enemy Ward follower qualifies, no target is hit and this resolver does not consume RNG.
+Rule:RandomTargetEligibility	RandomEnemyFollower excludes amulets	rules.random_target_requires_follower	Internal eligibility invariant	The random follower target pool excludes enemy amulets.
+Internal:SimultaneousLethal	Default policy	rules.simultaneous_lethal_default_policy	RuleConfig model invariant	Both leaders reach zero together; this engine's configured NonActive policy awards the win to the non-active player.
+Rule:DeckOut	Draw from empty deck	rules.empty_deck_draw_is_immediate_loss	https://shadowverse-wb.com/ja/help/?tab=tab1	Drawing while the deck is empty loses the battle immediately.
+Rule:Countdown	Countdown 2 boundary	rules.countdown_not_expired_at_two	https://shadowverse-wb.com/ja/help/?tab=tab1	At the first owner turn start, a countdown-2 amulet remains with countdown 1.
+Rule:Countdown	Countdown 1 boundary	rules.countdown_one_expires_at_start	https://shadowverse-wb.com/ja/help/?tab=tab1	A countdown-1 amulet expires at owner turn start; its effect summons the listed follower.
+Rule:Countdown	Expire with full board	rules.countdown_expiry_at_full_board	Internal ordering invariant	An expiring amulet leaves the board before its Last Words summon, freeing its own slot.
+Rule:CrestUniqueness	Duplicate crest grant	rules.crest_duplicate_is_not_added	https://shadowverse-wb.com/ja/help/?tab=tab1	A leader area cannot hold duplicate crests with the same name.
+Rule:CrestLimit	Sixth leader-area item	rules.crest_capacity_plus_one	https://shadowverse-wb.com/ja/help/?tab=tab1	The leader area holds at most five crests and faiths combined; the sixth item is not added.
+Rule:HandLimit,11063312	Crest effects at full hand	rules.expiring_crest_full_hand	https://shadowverse-wb.com/ja/help/?tab=tab1; https://shadowverse-wb.com/ja/deck/cardslist/card/?card_id=11063310	Generated cards and the regular turn draw overflow to the graveyard while hand count stays at nine.
+Internal:GameState	Crest equality field	rules.state_identity_tracks_crest_internal	Internal invariant (not official rule)	GameState equality distinguishes a state with a crest entry from one without.
+Internal:GameState	Faith equality fields	rules.state_identity_tracks_faith_internal	Internal invariant (not official rule)	GameState equality distinguishes faith identity and value changes.
+Internal:GameState	Turn flags equality fields	rules.state_identity_tracks_turn_flags_internal	Internal invariant (not official rule)	GameState equality distinguishes attacked-leader and extra-PP availability flags; hash collision behavior is not directly exposed by the public test API.

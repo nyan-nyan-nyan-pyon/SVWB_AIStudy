@@ -146,7 +146,7 @@
     },
     {"id": 159, "card_id": 10503310, "enhance_cost": 10,
       "effects": [
-        {"trigger": "OnPlay", "operation": "Draw", "amount": 1},
+        {"trigger": "OnPlay", "operation": "Draw", "amount": 2},
         {"trigger": "OnPlay", "operation": "Destroy", "target": "StrongestEnemyFollower"},
         {"trigger": "OnPlay", "operation": "Damage", "target": "AllEnemyFollowersAndLeader", "amount": 4, "mode": 4}
       ]
